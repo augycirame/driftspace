@@ -16,6 +16,17 @@ To play together, open the URL in a few browser tabs, or put the server somewher
 reach it. Settings come from environment variables: `PORT`, `SEED` (a different seed gives a
 different universe) and `DATA_FILE` (where the world is saved, by default `data/world.json`).
 
+## Put it online (Render)
+
+`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint**, pick this
+repository, and it creates the web service: `npm ci` to build, `npm start` to run, and a 1 GB
+disk at `/var/data` for the world save. Every push to `main` redeploys. Players open the
+service's `onrender.com` URL. WebSockets work there with no extra setup.
+
+The disk needs a paid instance type. On the free plan, remove the `disk` block: the game
+still works, but the server sleeps when nobody's playing and the world resets on every
+restart or deploy.
+
 ## What you can do today
 
 - **Fly** a ship through an endless galaxy. Each sector can hold a star (from red dwarfs to

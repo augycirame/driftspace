@@ -1,0 +1,23 @@
+# Render Blueprint: one web service runs the game server and serves the client.
+# The persistent disk keeps the world (player builds, mined asteroids, pilots) across
+# deploys and restarts. Disks need a paid instance type; without one, delete the `disk`
+# block, set plan: free, and the world resets on every deploy or restart.
+services:
+  - type: web
+    name: driftspace
+    runtime: node
+    plan: starter
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: SEED
+        value: "1337"
+      - key: DATA_FILE
+        value: /var/data/world.json
+    disk:
+      name: world
+      mountPath: /var/data
+      sizeGB: 1
