@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Driftspace</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="login" class="overlay">
+    <div class="card">
+      <h1>DRIFTSPACE</h1>
+      <p class="sub">An endless galaxy, shared with everyone in it.</p>
+      <input id="name" maxlength="16" placeholder="Pilot name" autocomplete="off" spellcheck="false">
+      <button id="play">Launch</button>
+      <p id="login-error" class="error"></p>
+    </div>
+  </div>
+
+  <div id="hud" hidden>
+    <div id="status" class="panel"></div>
+    <div id="cargo" class="panel"></div>
+    <div id="hint" class="panel small"></div>
+    <div id="palette" class="panel" hidden></div>
+    <div id="chat">
+      <div id="chat-log"></div>
+      <input id="chat-input" maxlength="200" placeholder="Say something to the galaxy…" hidden>
+    </div>
+    <div id="toasts"></div>
+  </div>
+
+  <div id="station" class="overlay" hidden>
+    <div class="card wide">
+      <h2 id="station-name">Station</h2>
+      <div id="station-body"></div>
+      <p class="small dim">Press E or Esc to undock.</p>
+    </div>
+  </div>
+
+  <div id="help" class="overlay" hidden>
+    <div class="card wide">
+      <h2>Flight manual</h2>
+      <table>
+        <tr><td>W / ↑</td><td>Thrust</td></tr>
+        <tr><td>A D / ← →</td><td>Turn</td></tr>
+        <tr><td>S / ↓</td><td>Brake</td></tr>
+        <tr><td>Space (hold)</td><td>Mine the nearest asteroid in range</td></tr>
+        <tr><td>E</td><td>Dock at a station: sell ore, buy upgrades</td></tr>
+        <tr><td>B</td><td>Build mode: click to place, right-click to salvage, 1-6 pick a block</td></tr>
+        <tr><td>M</td><td>Galaxy map: click a sector in range to hyperspace jump there</td></tr>
+        <tr><td>Mouse wheel</td><td>Zoom</td></tr>
+        <tr><td>Enter</td><td>Chat</td></tr>
+        <tr><td>H</td><td>This manual</td></tr>
+      </table>
+      <p class="small">Ore gets richer the farther you fly from Haven. Wormholes fling you hundreds of
+        sectors away. Beacons you build show up on everyone's galaxy map. The galaxy never ends.</p>
+      <p class="small dim">Press H or Esc to close.</p>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

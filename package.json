@@ -1,0 +1,15 @@
+{
+  "name": "driftspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An infinitely generated multiplayer space-exploration sandbox (prototype).",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
