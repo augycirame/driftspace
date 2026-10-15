@@ -6,7 +6,6 @@ playable prototype: a shared, endless galaxy that runs in the browser.
 ## Run it
 
 ```bash
-cd space-mmo
 npm install
 npm start            # http://localhost:8080
 npm test             # determinism + end-to-end multiplayer tests
