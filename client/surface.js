@@ -59,13 +59,13 @@ function detailTextures() {
 }
 
 // A sky dome: horizon haze fading up to a deeper zenith, with the sun's disk.
-function skyDome(prof, sunDir, anime = false) {
-  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color(anime ? '#1f5fe0' : '#1a3a7a'), anime ? 0.65 : 0.35);
+function skyDome(prof, sunDir, anime = false, soft = false) {
+  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color(soft ? '#4f9ee6' : anime ? '#1f5fe0' : '#1a3a7a'), soft ? 0.6 : anime ? 0.65 : 0.35);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), anime ? 0.45 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, time: { value: 0 } },
+    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), anime ? 0.45 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, soft: { value: soft ? 1 : 0 }, time: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
-      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; uniform float anime; uniform float time; varying vec3 vDir;
+      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; uniform float anime; uniform float soft; uniform float time; varying vec3 vDir;
       ${NOISE_GLSL}
       void main() {
         vec3 d = normalize(vDir);
@@ -78,22 +78,23 @@ function skyDome(prof, sunDir, anime = false) {
           c = mix(horizon, zenith, smoothstep(0.0, 0.75, pow(h, 0.7)));
           c += vec3(1.0, 0.97, 0.85) * (step(0.9993, s) * 2.0 + pow(s, 24.0) * 0.35 + step(0.985, s) * step(s, 0.9875) * 0.25);
           float az = atan(d.z, d.x);
-          vec3 lit = vec3(1.0, 0.99, 0.96), mid = vec3(0.86, 0.88, 0.98), dark = vec3(0.66, 0.66, 0.86);
+          vec3 lit = vec3(1.0, 0.99, 0.96), mid = mix(vec3(0.86, 0.88, 0.98), vec3(0.86, 0.9, 0.95), soft), dark = mix(vec3(0.66, 0.66, 0.86), vec3(0.68, 0.75, 0.86), soft);
+          float sw = 1.0 + soft * 5.0;  // painted style: softer, brushier cloud edges
           float toward = dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(sunDir.x, 0.0, sunDir.z))) * 0.5 + 0.5;
           // Horizon towers.
           float top = 0.1 + 0.32 * pow(fbm3(vec3(az * 2.2, 1.0, 9.0), 5), 1.6) * smoothstep(0.25, 0.75, fbm3(vec3(az * 0.7, 2.0, 4.0), 3));
-          float tower = step(d.y, top) * smoothstep(-0.02, 0.03, d.y);
+          float tower = smoothstep(top + 0.004 * sw, top - 0.004 * sw, d.y) * smoothstep(-0.02, 0.03, d.y);
           float tshade = fbm3(vec3(az * 6.0, d.y * 14.0, 5.0), 4);
-          vec3 tc = mix(dark, mid, smoothstep(0.42, 0.46, tshade + (d.y / max(top, 0.01)) * 0.25));
-          tc = mix(tc, lit, smoothstep(0.62, 0.66, tshade + toward * 0.35 + (d.y / max(top, 0.01)) * 0.2));
-          c = mix(c, mix(tc, horizon, 0.25), tower);
+          vec3 tc = mix(dark, mid, smoothstep(0.44 - 0.02 * sw, 0.44 + 0.02 * sw, tshade + (d.y / max(top, 0.01)) * 0.25));
+          tc = mix(tc, lit, smoothstep(0.64 - 0.02 * sw, 0.64 + 0.02 * sw, tshade + toward * 0.35 + (d.y / max(top, 0.01)) * 0.2));
+          c = mix(c, mix(tc, horizon, 0.25 + soft * 0.2), tower);
           // Cumulus overhead.
           vec2 uv = d.xz / (d.y + 0.18) * 2.2 + vec2(time * 0.01, 0.0);
           float n = fbm3(vec3(uv, 3.0), 5) + (fbm3(vec3(uv * 0.25, 1.0), 3) - 0.5) * 0.5;
-          float cloud = smoothstep(0.55, 0.58, n) * smoothstep(0.08, 0.2, d.y);
+          float cloud = smoothstep(0.55 - 0.012 * sw, 0.55 + 0.03 * sw, n) * smoothstep(0.08, 0.2, d.y);
           float body = fbm3(vec3(uv * 2.0 + 0.05, 3.0), 4) + (n - 0.55) * 1.5;
-          vec3 cc = mix(dark, mid, smoothstep(0.46, 0.5, body));
-          cc = mix(cc, lit, smoothstep(0.58, 0.62, body + toward * 0.15));
+          vec3 cc = mix(dark, mid, smoothstep(0.48 - 0.02 * sw, 0.48 + 0.02 * sw, body));
+          cc = mix(cc, lit, smoothstep(0.6 - 0.02 * sw, 0.6 + 0.02 * sw, body + toward * 0.15));
           float edge = smoothstep(0.55, 0.58, n) - smoothstep(0.58, 0.62, n);
           cc = mix(cc, lit, edge * 0.8);
           c = mix(c, cc, cloud);
@@ -135,15 +136,16 @@ function driftTexture(kind) {
   return t;
 }
 
-function animeDrift(planet) {
-  const kind = planet.type === 'Ice' ? 'snow' : planet.type === 'Lava' ? 'ember' : (planet.starter || planet.holy || planet.type === 'Jungle' || planet.type === 'Ocean') ? 'petal' : 'mote';
+function animeDrift(planet, style) {
+  const lush = style === 'chibi' ? planet.starter || planet.holy || planet.type === 'Jungle' || planet.type === 'Ocean' : planet.holy;
+  const kind = planet.type === 'Ice' ? 'snow' : planet.type === 'Lava' ? 'ember' : lush ? 'petal' : 'mote';
   const n = kind === 'snow' ? 500 : 260, box = 70;
   const base = new Float32Array(n * 3), pos = new Float32Array(n * 3);
   for (let i = 0; i < n * 3; i++) base[i] = Math.random() * box;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   const color = { petal: '#ffffff', snow: '#ffffff', ember: '#ffa040', mote: '#fff2b0' }[kind];
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: driftTexture(kind), color, size: kind === 'petal' ? 0.45 : kind === 'snow' ? 0.35 : 0.22,
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: driftTexture(kind), color, size: kind === 'petal' ? 0.45 : kind === 'snow' ? 0.35 : style === 'anime' ? 0.12 : 0.22,
     transparent: true, depthWrite: false, opacity: kind === 'mote' ? 0.7 : 0.95, blending: kind === 'ember' ? THREE.AdditiveBlending : THREE.NormalBlending }));
   pts.frustumCulled = false;
   const wind = { petal: [1.6, -0.6, 0.7], snow: [0.4, -1.4, 0.2], ember: [0.3, 1.2, 0.2], mote: [0.3, 0.1, 0.2] }[kind];
@@ -223,8 +225,9 @@ export class SurfaceView {
     this.root.add(sun, sun.target);
     this.sun = sun;
     const anime = !!this.S.gfx?.anime;
-    if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime); this.root.add(this.sky); } else this.sky = null;
-    if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), 0.45), 160, 700);
+    const soft = this.S.gfx?.style === 'anime';
+    if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime, soft); this.root.add(this.sky); } else this.sky = null;
+    if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color(soft ? '#dfeaf2' : '#e8f6ff'), 0.45), 160, 700);
     this.root.add(new THREE.HemisphereLight(prof.sky, prof.low, 1.1));
     this.root.add(new THREE.AmbientLight('#ffffff', 0.25));
     const sunGlow = glowSprite('#fff8e0', 260, 0.9);
@@ -247,7 +250,7 @@ export class SurfaceView {
       this.root.add(liquid);
     }
     this.buildFlora(prof);
-    this.drift = anime ? animeDrift(planet) : null;
+    this.drift = anime ? animeDrift(planet, this.S.gfx.style) : null;
     if (this.drift) this.root.add(this.drift);
     this.buildDeposits();
     if (planet.starter) this.buildSettlement();
@@ -310,6 +313,7 @@ export class SurfaceView {
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     const dt = detailTextures();
     this.terrain = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: dt.color, normalMap: dt.normal, normalScale: new THREE.Vector2(0.8, 0.8) }));
+    this.terrain.material.userData.paint = 1.15;
     this.terrain.receiveShadow = true;
     this.terrain.userData.noCast = true;
     this.root.add(this.terrain);
@@ -384,17 +388,25 @@ export class SurfaceView {
     const anime = !!this.S.gfx?.anime;
     const leafColor = anime ? (this.planet.holy ? '#8ad06a' : this.planet.starter ? '#4cc46a' : '#3a9a4a') : this.planet.holy ? '#6aaa4a' : this.planet.starter ? '#3aaa6a' : '#2f7a3a';
     place(new THREE.CylinderGeometry(0.25, 0.4, 5, 6), trunk, of('tree'), 2.5);
-    if (anime) {
-      // Anime trees: soft, puffy clusters of foliage, like a painted background.
-      const puff = (r, x, y, z) => new THREE.IcosahedronGeometry(r, 2).translate(x, y, z);
-      const crown = mergeGeometries([puff(1.9, 0, 0, 0), puff(1.4, 1.3, -0.4, 0.4), puff(1.4, -1.2, -0.3, -0.5), puff(1.3, 0.2, 1.2, -0.2), puff(1.2, -0.3, -0.6, 1.3)]);
-      place(crown, new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.9 }), of('tree'), 5.8);
+    const puff = (r, x, y, z) => new THREE.IcosahedronGeometry(r, 2).translate(x, y, z);
+    const crown = () => mergeGeometries([puff(1.9, 0, 0, 0), puff(1.4, 1.3, -0.4, 0.4), puff(1.4, -1.2, -0.3, -0.5), puff(1.3, 0.2, 1.2, -0.2), puff(1.2, -0.3, -0.6, 1.3)]);
+    if (this.S.gfx?.style === 'anime') {
+      // Painted-background trees in muted greens: tall layered pines mixed with leafy crowns.
+      const trees = of('tree'), pines = trees.filter((_, i) => i % 3 !== 0), leafy = trees.filter((_, i) => i % 3 === 0);
+      const cold = this.planet.type === 'Ice';
+      const pine = mergeGeometries([0, 1, 2, 3].map((i) => new THREE.ConeGeometry(2.3 - i * 0.45, 2.8, 9).translate(0, i * 1.7, 0)));
+      place(new THREE.CylinderGeometry(0.2, 0.32, 5, 6), trunk, pines, 2.5);
+      place(pine, new THREE.MeshStandardMaterial({ color: cold ? '#9ab0a8' : '#47684e', roughness: 0.9 }), pines, 3.9);
+      place(crown(), new THREE.MeshStandardMaterial({ color: this.planet.holy ? '#8aa86a' : '#5f8650', roughness: 0.9 }), leafy, 5.8);
+    } else if (anime) {
+      // Chibi trees: soft, puffy clusters of foliage.
+      place(crown(), new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.9 }), of('tree'), 5.8);
     } else {
       place(new THREE.IcosahedronGeometry(2.4, 0), M({ color: leafColor }), of('tree'), 5.8);
     }
     place(new THREE.CylinderGeometry(0.2, 0.3, 7, 6), trunk, of('palm'), 3.5);
     place(new THREE.ConeGeometry(2.6, 1.2, 7), M({ color: '#3a9a4a' }), of('palm'), 7.2);
-    place(new THREE.DodecahedronGeometry(1.4, 0), M({ color: prof.mid, roughness: 1 }), of('rock'), 0.6, 0.7);
+    { const rockMat = M({ color: prof.mid, roughness: 1 }); rockMat.userData.stone = 1.2; place(new THREE.DodecahedronGeometry(1.4, 0), rockMat, of('rock'), 0.6, 0.7); }
     place(new THREE.ConeGeometry(0.8, 5, 5), M({ color: '#cfefff', roughness: 0.2, transparent: true, opacity: 0.85 }), of('spike'), 2.4);
     place(new THREE.CylinderGeometry(0.45, 0.5, 3.4, 8), M({ color: '#4a7a3a' }), of('cactus'), 1.7);
     place(new THREE.CylinderGeometry(0.35, 0.5, 4, 8), M({ color: '#d8c8e8' }), of('mushroom'), 2);

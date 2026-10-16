@@ -90,15 +90,24 @@ in the browser.
 
 ### Art style
 
-The game looks like anime by default:
+Three styles, switched under Options (**O**) → Art style and saved in the browser:
 
-- **Cel shading.** Light falls off in one crisp edge, shadows are tinted cool blue-violet like painted cels, and a bright rim light traces silhouettes.
-- **Ink.** Bold dark outlines on everything (an edge pass over depth and surface normals), plus inked hulls around characters and creatures.
-- **Characters.** Pilots are chibi: big heads, big shining eyes with lashes and highlights, blush, spiky hair in the pilot's color with a shine band and a cowlick, a flight jacket and a scarf that streams behind them as they run. Creatures get anime eyes.
-- **Skies.** Painted like a film background: a deep blue gradient, a crisp sun with a halo, towering cloud banks on the horizon, sunlit cumulus with lavender undersides, and wispy high clouds. Trees are soft, puffy clusters.
-- **Atmosphere.** Cherry petals drift on green worlds, snow on ice worlds, embers over lava, and sunlit motes elsewhere. In space the nebula is painted in flat tones with twinkling four-point stars, and speed lines streak past near top speed. A soft vignette frames everything.
+- **Anime** (default): a grounded, painted look like a seinen anime series. Natural, slightly
+  warm colors; fine sepia ink lines; one crisp, soft-toned light/shadow edge. Surfaces are
+  painted with tonal patches and brush mottling. Masonry (temples, shrines, ruins, dungeon walls,
+  boulders) gets hand-drawn stonework: irregular stones with mortar lines. Skies are soft and
+  bright with brushy clouds, and forests mix tall layered pines with leafy crowns. Pilots are
+  drawn like a character sheet: real proportions, a narrow, steady gaze, hair slicked back with
+  braids at the temples (in natural hair colors), a rough tunic in the pilot's color with a rope
+  belt and wrapped wrists, dark trousers and tall boots. Armor shows as leather or plate.
+- **Chibi**: bright and cute. Bold black ink, punchy colors, blue-violet cel shadows and a rim
+  light; big-headed chibi pilots with huge shining eyes, spiky hair, a shine band and a
+  streaming scarf; anime-eyed creatures; film-style skies with towering clouds and cherry
+  petals drifting on green worlds.
+- **Realistic**: smooth lighting and natural colors.
 
-Switch to **Realistic** under Options (**O**) → Art style; the choice is saved in the browser.
+Both anime styles add drifting snow on ice worlds, embers over lava and sunlit motes elsewhere,
+a painted nebula with twinkling four-point stars in space, and speed lines near top speed.
 
 ## The content library (`shared/content/`)
 

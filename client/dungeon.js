@@ -60,6 +60,7 @@ export class DungeonView {
       }
     }
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+    mat.userData.stone = 0.9;
     this.root.add(new THREE.Mesh(mergeBoxes(floor), mat));
     this.root.add(new THREE.Mesh(mergeBoxes(walls), mat));
     const ceil = new THREE.Mesh(new THREE.PlaneGeometry(d.W * DCELL, d.H * DCELL).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: theme.wall, roughness: 1 }));

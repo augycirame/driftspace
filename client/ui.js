@@ -376,9 +376,12 @@ export class UI {
       const hs = document.createElement('h3');
       hs.textContent = 'Art style';
       body.appendChild(hs);
-      const styles = { anime: 'Cel shading, bold ink lines, painted film-style skies, chibi pilots, drifting petals and speed lines.', realistic: 'Smooth lighting and natural colors.' };
-      for (const [id, text] of Object.entries(styles)) {
-        const name = id === 'anime' ? 'Anime' : 'Realistic';
+      const styles = {
+        anime: ['Anime', 'Grounded, painted anime: natural colors, fine sepia linework, hand-drawn stone and soft painted skies.'],
+        chibi: ['Chibi', 'Bright and cute: bold ink, punchy colors, big-eyed chibi pilots and drifting petals.'],
+        realistic: ['Realistic', 'Smooth lighting and natural colors.'],
+      };
+      for (const [id, [name, text]] of Object.entries(styles)) {
         const b = this.button(id === gfx.style ? `${name} ✓` : name, () => { gfx.setStyle(id); this.rerender(); }, id === gfx.style ? '' : 'alt');
         body.appendChild(this.row(`<b>${name}</b><br><span class="small dim">${text}</span>`, b));
       }

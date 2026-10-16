@@ -6,11 +6,17 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { InkPass, stylize } from './toon.js';
+import { InkPass, stylize, setToonStyle, setHullStyle } from './toon.js';
 
-export const STYLES = { anime: 'Anime', realistic: 'Realistic' };
-// Ink line weight per kind of scene.
+export const STYLES = { anime: 'Anime', chibi: 'Chibi', realistic: 'Realistic' };
+// Ink line weight per kind of scene, and the look of each cel-shaded style. Anime is the grounded,
+// painted look of a seinen series: thin sepia lines, natural colors, a gentle warm grade. Chibi is
+// bright and cute: bold black lines and punchy colors.
 const INK = { space: { thickness: 1.4, normalK: 0.9 }, surface: { thickness: 1.7, normalK: 0.8 }, dungeon: { thickness: 1.6, normalK: 0.8 } };
+const LOOK = {
+  anime: { lineScale: 0.85, ink: '#22180f', inkAlpha: 0.95, saturation: 1.0, vignette: 0.4, grade: [1.03, 1.0, 0.95], hull: ['#22180f', 0.003], exposure: 1.12 },
+  chibi: { lineScale: 1, ink: '#1a1020', inkAlpha: 0.92, saturation: 1.3, vignette: 1, grade: [1, 1, 1], hull: ['#1a1020', 0.0045], exposure: 1.08 },
+};
 
 export const QUALITY = {
   low:    { name: 'Low',    scale: 0.75, bloom: false, shadows: 0,    sky: false, flora: 0.5, planetTex: 256,  flare: false },
@@ -62,12 +68,14 @@ export class Graphics {
     if (!STYLES[style]) return;
     this.style = style;
     try { localStorage.setItem('ds_style', style); } catch {}
-    for (const sc of this.scenes) stylize(sc, style === 'anime');
+    for (const sc of this.scenes) stylize(sc, style !== 'realistic');
     this.apply();
     for (const fn of this.listeners) fn(this.q);
   }
 
-  get anime() { return this.style === 'anime'; }
+  // Both anime styles share the cel-shaded pipeline.
+  get anime() { return this.style !== 'realistic'; }
+  get look() { return LOOK[this.style] || LOOK.anime; }
 
   apply() {
     const q = this.q;
@@ -75,7 +83,8 @@ export class Graphics {
     this.renderer.shadowMap.enabled = q.shadows > 0;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.toneMapping = this.anime ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = this.anime ? 1.08 : 1.05;
+    this.renderer.toneMappingExposure = this.anime ? this.look.exposure : 1.05;
+    if (this.anime) { setToonStyle(this.style); setHullStyle(...this.look.hull); }
     this.composer?.dispose?.();
     this.composer = null;
     this.resize();
@@ -113,7 +122,14 @@ export class Graphics {
     if (this.ink) {
       this.ink.scene = scene;
       this.ink.camera = camera;
-      Object.assign(this.ink.settings, INK[kind]);
+      const look = this.look, ink = this.ink.settings;
+      Object.assign(ink, INK[kind]);
+      ink.thickness *= look.lineScale;
+      ink.ink.set(look.ink);
+      ink.inkAlpha = look.inkAlpha;
+      ink.saturation = look.saturation;
+      ink.vignette = look.vignette;
+      ink.grade.setRGB(...look.grade);
       // Speed lines kick in near top speed (set each frame by the game as a 0..1 fraction).
       const target = kind === 'space' ? Math.max(0, (this.speed || 0) - 0.55) / 0.45 : 0;
       this.ink.settings.speed = kind === 'space' ? this.ink.settings.speed + (target - this.ink.settings.speed) * 0.1 : 0;

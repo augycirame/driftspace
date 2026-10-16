@@ -35,7 +35,7 @@ const serverTime = () => (Date.now() + S.timeOffset) / 1000;
 const canvas = $('game');
 const gfx = new Graphics(canvas);
 S.gfx = gfx;
-setAnimeMode(gfx.anime);
+setAnimeMode(gfx.anime && gfx.style);
 const space = new SpaceView(S);
 const surface = new SurfaceView(S);
 const dungeon = new DungeonView(S);
@@ -45,7 +45,7 @@ const map = new GalaxyMap(S, send);
 window.__views = { space, surface, dungeon };
 // Changing quality rebuilds what depends on it (planet textures, shadows, plants).
 gfx.onChange(() => {
-  setAnimeMode(gfx.anime);
+  setAnimeMode(gfx.anime && gfx.style);
   space.clearEntities();
   space.selfRev = -1;
   space.rebuildSectors();
