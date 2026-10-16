@@ -31,6 +31,7 @@ import { Quests } from './quests.js';
 import { AI } from './ai.js';
 import { Powers } from './powers.js';
 import { Bases } from './bases.js';
+import { Director } from './director.js';
 import { skillBonus, SPELLS, POWERS } from '../shared/powers.js';
 import { townsOf } from '../shared/towns.js';
 
@@ -58,6 +59,7 @@ export class World {
     this.quests = new Quests(this);
     this.powers = new Powers(this);
     this.bases = new Bases(this);
+    this.director = new Director(this);
     this.skills = this.powers;
     this.ai = new AI(log);
     if (this.ai.enabled) log('AI townsfolk enabled');
@@ -94,6 +96,7 @@ export class World {
     this.tickTimer = setInterval(() => {
       const now = Date.now();
       try { this.tick(Math.min(0.25, (now - last) / 1000), now); } catch (e) { this.log('tick error', e); }
+      this.director.tickTime(Date.now() - now);
       last = now;
     }, TICK_MS);
     this.saveTimer = setInterval(() => this.save(), SAVE_MS);
@@ -855,6 +858,11 @@ export class World {
         this.politics.startEvent(p.planet, ids[0], kind, 15, `(${kind} begins in the ${this.politics.realmDef(p.planet, ids[0]).name})`);
         return reply('Event started.');
       }
+      case 'director': {
+        if (args[0]) return reply(this.director.event(args[0]) ? `Event ${args[0]} started.` : 'Usage: /director [raid|festival|famine|plague|omen|bounty|bonanza]');
+        for (const line of this.director.status()) reply(line);
+        return;
+      }
       case 'pos': {
         const x = Number(args[0]), z = Number(args[1]);
         if (p.mode !== 'surface' || !Number.isFinite(x) || !Number.isFinite(z)) return reply('Usage (on a planet): /pos <x> <z>');
@@ -873,7 +881,7 @@ export class World {
         this.sendSelf(conn);
         return reply('Healed.');
       default:
-        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /town, /war, /event, /mech, /spells, /power, /curse, /heal');
+        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /town, /war, /event, /mech, /spells, /power, /curse, /pos, /director, /heal');
     }
   }
 
@@ -932,6 +940,7 @@ export class World {
     this.powers.tick(dt, now);
     this.bases.tick(dt, now);
     this.gravityTick(dt, now);
+    this.director.tick(now);
     this.snapshots(now);
   }
 
@@ -978,7 +987,7 @@ export class World {
         p.mining = null;
         continue;
       }
-      const take = Math.min(p.stats.mineRate * dt, left);
+      const take = Math.min(p.stats.mineRate * dt * (this.director.bonanza() ? 2 : 1), left);
       p.mineFrac += take;
       const whole = Math.min(Math.floor(p.mineFrac), space);
       if (whole > 0) {

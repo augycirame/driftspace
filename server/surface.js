@@ -239,6 +239,7 @@ export class Surfaces {
     inst.creatures.delete(c.id);
     this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
     this.w.quests.onKill(conn, inst.planet.id, c);
+    this.w.director?.record('kills');
     this.w.powers.gain(conn, 'combat', Math.max(2, Math.round(c.maxHp / 25)));
     if (c.behavior === 'native') {
       if (c.npc) inst.natives.delete(c.npc);
@@ -257,7 +258,7 @@ export class Surfaces {
     }
     const luck = 1 + (conn.player.buffs?.luck || 0);
     if (c.guard && Math.random() < 0.15 * luck) this.w.giveItem(conn, randomRelic());
-    const reward = Math.round((inst.planet.starter ? 3 : c.guard || c.faction ? 25 : 8) * inst.planet.richness);
+    const reward = Math.round((inst.planet.starter ? 3 : c.guard || c.faction ? 25 : 8) * inst.planet.richness * (this.w.director?.loot || 1));
     const crew = this.w.parties.nearbyMembers(conn.player);
     for (const p of crew) {
       p.credits += Math.max(1, Math.round(reward / crew.length));
@@ -279,6 +280,7 @@ export class Surfaces {
     conn.send({ t: 'you', hp: p.hp });
     if (p.hp > 0) return;
     p.dead = true;
+    this.w.director?.record('deaths');
     this.w.broadcast({ t: 'chat', from: null, text: `${p.name} was taken down by ${byName}.` });
     conn.send({ t: 'died', by: byName, respawnIn: 3 });
     setTimeout(() => {
@@ -340,6 +342,7 @@ export class Surfaces {
       if (tags.some((t) => ['ash', 'bone', 'scorched'].includes(t)) && Math.random() < 0.08) p.cargo.silver = (p.cargo.silver || 0) + 1;
       if (deep && tags.some((t) => ['rock', 'crystal', 'fire'].includes(t)) && Math.random() < 0.05) p.cargo.mithril = (p.cargo.mithril || 0) + 1;
       if (p.powerOn && p.power === 'titan') n *= 3;
+      if (this.w.director?.bonanza()) n *= 2;
       if (Math.random() < skillBonus(p.skills, 'mining')) n += 1;
       p.cargo[ore] = (p.cargo[ore] || 0) + n;
       p.dug = (p.dug || 0) + n;
@@ -534,8 +537,9 @@ export class Surfaces {
   newCreature(inst, species, x, z, extra = {}) {
     const def = creatureStats(inst.planet, species);
     const id = 'c' + nextId++;
+    const dif = this.w.director?.difficulty || 1;
     const c = {
-      id, species, x, z, y: this.ground(inst.planet.id, x, z), yaw: 0, hp: def.hp, maxHp: def.hp, dmg: def.dmg,
+      id, species, x, z, y: this.ground(inst.planet.id, x, z), yaw: 0, hp: def.hp * dif, maxHp: def.hp * dif, dmg: def.dmg * dif,
       speed: def.speed, size: def.size, behavior: def.behavior, faction: def.faction || null, shape: def.shape,
       lastAttack: 0, wander: null, aggro: null, ...extra,
     };
@@ -568,7 +572,7 @@ export class Surfaces {
     }
 
     const wild = [...inst.creatures.values()].filter((c) => !c.guard && !c.raider).length;
-    const cap = Math.min(18, conns.length * (planet.starter ? 3 : 5));
+    const cap = Math.round(Math.min(18, conns.length * (planet.starter ? 3 : 5)) * (this.w.director?.spawns || 1));
     if (wild >= cap || Math.random() > 0.5) return;
     const anchor = conns[Math.floor(Math.random() * conns.length)].player;
     const a = Math.random() * Math.PI * 2, d = 55 + Math.random() * 70;

@@ -343,7 +343,7 @@ export class UI {
   discovered(keys) {
     for (const k of keys) {
       const [kind, id] = k.split(':');
-      const name = { terrain: TERRAINS, creature: CREATURES, structure: STRUCTURES, relic: RELICS, god: GODS, race: ALIEN_RACES, dungeon: DUNGEON_THEMES }[kind]?.[id]?.name;
+      const name = { terrain: TERRAINS, creature: CREATURES, structure: STRUCTURES, relic: RELICS, god: GODS, race: ALIEN_RACES, dungeon: DUNGEON_THEMES, people: PEOPLES }[kind]?.[id]?.name;
       if (name) this.toast(`Codex: ${name}`, 'loot');
     }
     if (this.current?.kind === 'codex') this.rerender();
@@ -353,7 +353,7 @@ export class UI {
     this.codexTab = tab;
     this.open('codex', 'Codex', (body) => {
       const known = new Set(this.S.you.codex || []);
-      const tabs = { creatures: ['Creatures', CREATURES, 'creature'], aliens: ['Aliens', ALIEN_RACES, 'race'], terrains: ['Terrains', TERRAINS, 'terrain'], structures: ['Structures', STRUCTURES, 'structure'], dungeons: ['Dungeons', DUNGEON_THEMES, 'dungeon'], relics: ['Relics', RELICS, 'relic'], gods: ['Gods', GODS, 'god'], factions: ['Powers', null] };
+      const tabs = { creatures: ['Creatures', CREATURES, 'creature'], aliens: ['Aliens', ALIEN_RACES, 'race'], peoples: ['Peoples', PEOPLES, 'people'], terrains: ['Terrains', TERRAINS, 'terrain'], structures: ['Structures', STRUCTURES, 'structure'], dungeons: ['Dungeons', DUNGEON_THEMES, 'dungeon'], relics: ['Relics', RELICS, 'relic'], gods: ['Gods', GODS, 'god'], factions: ['Powers', null] };
       const bar = document.createElement('div');
       bar.className = 'tabs';
       for (const [id, [label, table, prefix]] of Object.entries(tabs)) {
@@ -375,7 +375,7 @@ export class UI {
         if (prefix === 'creature' && e.race) continue;   // listed under Aliens
         if (!known.has(`${prefix}:${id}`)) {
           const hint = prefix === 'creature' ? (e.boss ? 'A dungeon boss' : e.tags.includes('dungeon') ? 'Found underground' : `Lives in: ${e.tags.join(', ')}`)
-            : prefix === 'race' ? 'An alien species of the wilds' : prefix === 'dungeon' ? 'Find its entrance on a planet' : prefix === 'terrain' ? 'An undiscovered kind of world' : prefix === 'relic' ? `${RELIC_RARITY[e.rarity]} relic` : prefix === 'god' ? 'Pray at one of their shrines' : 'Not yet found';
+            : prefix === 'people' ? 'A native people of the worlds' : prefix === 'race' ? 'An alien species of the wilds' : prefix === 'dungeon' ? 'Find its entrance on a planet' : prefix === 'terrain' ? 'An undiscovered kind of world' : prefix === 'relic' ? `${RELIC_RARITY[e.rarity]} relic` : prefix === 'god' ? 'Pray at one of their shrines' : 'Not yet found';
           body.appendChild(this.row(`<span class="dim">??? · ${hint}</span>`));
           continue;
         }
@@ -384,6 +384,7 @@ export class UI {
         if (prefix === 'terrain') html += `<br><span class="small">${esc(e.desc)}</span><br><span class="dim small">Ore: ${e.ore.map(([o]) => o).join(', ')}</span>`;
         if (prefix === 'structure') html += ` <span class="dim small">${e.kind}</span><br><span class="small">${esc(e.lore)}</span>`;
         if (prefix === 'relic') html += ` <span class="dim small">${RELIC_RARITY[e.rarity]}</span><br><span class="small">${describeBonus(e.bonus)}</span><br><span class="dim small">${esc(e.lore)}</span>`;
+        if (prefix === 'people') html += ` <span class="dim small">${esc(e.plural)}</span><br><span class="small">${esc(e.lore)}</span><br><span class="dim small">${esc(e.temperament)} · build in the ${e.style} style · trade ${e.goods.join(', ')}</span>`;
         if (prefix === 'race') html += ` <span class="dim small">${e.disposition}</span><br><span class="small">${esc(e.desc)}</span><br><span class="dim small">Settles: ${e.tags.join(', ')}${e.trader ? ' · trades' : ''}</span>`;
         if (prefix === 'dungeon') html += `<br><span class="small">${esc(e.lore)}</span><br><span class="dim small">Boss: ${esc(CREATURES[e.boss].name)} · lives in ${e.tags.join(', ')} worlds</span>`;
         if (prefix === 'god') html += ` <span class="dim small">${esc(e.domain)}</span><br><span class="small">${esc(e.lore)}</span><br><span class="dim small">Blessing: ${describeBonus(e.blessing)} · Favor ${this.S.you.favor?.[id] || 0}/5</span>`;

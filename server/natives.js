@@ -33,7 +33,7 @@ export class Natives {
   make(inst, town, npc, extra = {}) {
     const st = ROLE_STATS[npc.role] || ROLE_STATS.default;
     const people = npc.people;
-    let hp = st.hp * (people === 'dwarf' ? 1.3 : people === 'vampire' ? 1.2 : 1) * (0.7 + 0.3 * inst.planet.richness);
+    let hp = st.hp * (people === 'dwarf' ? 1.3 : people === 'vampire' ? 1.2 : 1) * (0.7 + 0.3 * inst.planet.richness) * (extra.raider ? this.w.director?.difficulty || 1 : 1);
     const id = 'n' + nextId++;
     const [hx, hz] = npc.near || npc.home;
     const c = {

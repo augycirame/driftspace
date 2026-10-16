@@ -165,12 +165,111 @@ and a boss in the deepest room guarding a treasure vault (which usually holds a 
 party enters the same copy of the dungeon together. Difficulty grows the farther the planet is
 from Haven, and a dungeon resets a couple of minutes after everyone has left.
 
+## Native peoples, towns and realms
+
+Every landable world is inhabited. Humans (the Reachfolk), elves (the Eldar), dwarves (the
+Khazar), vampires (the Nocturne) and the werewolf clans settle the worlds that suit them, in one
+to six towns per world: hamlets, villages, walled towns and cities, each built in its people's
+style (thatched timber halls and round stone keeps, white elven spires, dwarven stone halls,
+gothic manors, clan longhouses). Towns are full of named people with jobs: rulers, stewards,
+captains and guards, merchants, smiths, priests, healers, mages, innkeepers, hunters, farmers
+and bards. They go about their day, defend their homes, and at night vampires and werewolves
+(who change form) hunt outsiders who haven't earned their trust.
+
+**Realms and politics** (R). Towns belong to realms (kingdoms, councils, chiefdoms, conclaves,
+thaneholds, night courts, clans) with rulers, treasuries, stability and relations with their
+neighbors. The server simulates every visited world: relations drift, realms ally or go to
+war, wars are fought (raids on towns while you watch) and won (a town changes hands, or tribute
+is paid), rulers die and are succeeded or overthrown, and famines, plagues, festivals and
+bandit seasons come and go. A chronicle records it all. Your standing with each realm moves
+with what you do: trade, quests, conversation, or killing its people.
+
+**Money.** Each realm mints its own coin (crowns, silver leaves, marks, sovereigns, fangs) at an
+exchange rate that rises and falls with its stability and wars. Town markets trade goods
+(grain, ale, elven silk, mithril, bloodwine, furs…) at prices driven by supply, demand and
+events. Buy where it's made, sell where it's wanted. Credits work too, at a 10% markup.
+
+**Talking** (E). Every townsperson greets you according to who you are to them and what's
+happening: war, famine, festival, night, weather. They trade, change money, heal, teach magic,
+lift curses, share rumors and hand out work. With an `ANTHROPIC_API_KEY` set on the server,
+you can also simply talk to them: each one is voiced by Claude with their own character sheet
+(people, temperament, job, town, realm, ruler, wars, recent events, how they regard you), and
+they react within their role: open their shop, offer work, end the conversation, or (if
+gravely insulted, and armed) attack. Good conversations win a little standing. Calls are rate
+limited per player and capped per day (`AI_DAILY_LIMIT`, default 3000); `NPC_MODEL` picks the
+model (default `claude-opus-5-5`). Without a key, NPCs use scripted dialogue.
+
+**Climate, weather and day.** Worlds are frozen, cold, temperate, humid, arid or scorching, with
+weather that comes and goes: rain, thunderstorms, snow, blizzards, fog, sandstorms and ashfall
+(the worst of which wear you down outside towns unless your armor is good). Every world turns at
+its own pace, with sunsets, starry nights and a moon. Small worlds have low gravity.
+
+## Questlines
+
+Ask anyone for work. Quests come from what is actually happening: a famine needs grain, a plague
+needs herbs, bandits need clearing (then their chief), a war needs iron, then soldiers, then
+someone to carry the terms of peace (or a threat), feuding realms need envoys (deliver the letter
+faithfully or rewrite it into an insult and start a war), hunters want beasts thinned, smiths want
+ore, merchants want trade runs, and mages want dungeons cleared and ruins searched. Finishing one
+stage of a line leads to the next. When the world changes underneath a quest (the famine ends,
+the giver dies, the war is won, the town is conquered) the quest rewrites itself. Outcomes feed
+back into the realms: stability, relations, war scores, peace treaties and the chronicle.
+Quests are tracked on the HUD, the radar and in the journal (J).
+
+## Skills, magic and powers (U)
+
+- **Skills** grow with use: combat, mining, trade, speech, piloting, magic and crafting, each with
+  a lasting bonus.
+- **Magic**: mages, priests and healers teach spells for local coin: Firebolt, Frost Nova, Mending,
+  Blink, Chain Lightning, Ward and Sunlance. Cast with 1-4; mana regenerates.
+- **Superpowers** come from the old gods: pray at one god's shrines three times and they grant
+  their power. Vael: flight. Kharon-Ul: Forge-Strength. Isareth: the Pale Aegis
+  (invulnerability). Mor-Seth: Hunter's Stride (speed). Oruun: the Silent Veil (unseen). Press F.
+- **Curses**: a vampire's bite can make you a vampire (stronger at night, drink blood from your
+  hits, burn in daylight away from towns); a werewolf's bite at night can make you a werewolf
+  (T to become a great wolf at night: fast, tough, deadly claws, no guns or spells). Your own
+  kind stop hunting you. A priest can cure either.
+- **Mechs**: mech frames are sold at stations and Haven's trade hall, or crafted. Equip one, then
+  G to climb in: a shoulder cannon with splash damage, jump jets, and armor that soaks the hits.
+  It repairs itself while you're out of it.
+
+## Materials, crafting and bases
+
+Dig for stone (and, on the right worlds, silver, mana crystal and deep mithril), chop trees for
+wood, and hunt for hide. Craft weapons, armor, mech frames and focus relics (C) at your own
+workbench, in a town with a smith, or aboard a station; crafting skill unlocks higher tiers and
+sometimes produces a masterwork.
+
+Build bases from timber and stone walls, doors, beds (you wake up there), storage chests,
+workbenches, turrets that shoot whatever threatens you, and claim banners that keep everyone
+else from digging or building within 30 m. In space, a docking port turns anything you build into
+a station other pilots can dock at (free repairs, ore at 80%, refits, crafting), and turrets
+defend it from pirates and the Hollow.
+
+## Physics
+
+Stars pull on ships, and black holes pull hard: the accretion disk strips shields and burns the
+hull, and anything that crosses the event horizon is flung 15-40 sectors across the galaxy.
+Each planet has its own surface gravity.
+
+## The AI director
+
+An AI runs the game from the inside. Every minute it measures deaths, kills, income, quests and
+server load (tick time, creatures, ships), and turns three dials: **difficulty** (enemy
+strength), **loot** (reward multiplier) and **spawns** (how much the world spawns, cut back when
+the server is struggling). When nothing has happened for a while it stages world events: raids,
+festivals, famines, plagues, a god's omen blessing a planet, pirate bounty convoys, mining
+bonanzas. With an API key, a Claude **game master** reviews the numbers every 15 minutes and
+makes the bigger calls, bounded: each dial moves at most 0.15 per decision and stays within
+limits, and events come from a fixed menu. Admins can read its state with `/director`.
+
 ## Admin commands
 
 Pilots named in `ADMIN` can type these in chat: `/spawn pirate|hollow|imperial|rebel [n]`,
 `/tp <x> <z>`, `/land`, `/give <ore> [n]`, `/credits [n]`, `/story [n]` (advance the current
 goal), `/rep empire|rebellion <n>`, `/relic <id>`, `/goto <structure|dungeon|village>` (on a
-planet), `/heal`.
+planet), `/town [i]`, `/pos <x> <z>`, `/war`, `/event famine|plague|festival|raiders`, `/mech [tier]`,
+`/spells`, `/power <id>`, `/curse vampire|werewolf|none`, `/director [event]`, `/heal`.
 
 ## How it works
 
@@ -180,6 +279,9 @@ planet), `/heal`.
 | `server/world.js` | Stores **only player changes**: mined asteroids, dug terrain, built blocks, beacons, pilots, story progress. An untouched sector or planet costs nothing. |
 | `server/combat.js`, `server/surface.js` | The server decides bolts, hitscan shots, NPC and creature AI, damage, loot and bounties. |
 | `server/story.js`, `shared/story.js` | The story director: community goals, chapter transitions, and the effects that change the galaxy. |
+| `shared/towns.js`, `server/politics.js`, `server/natives.js` | Towns, realms and people are generated from the seed; what happens to them afterwards (wars, deaths, coups, markets) is simulated and saved per visited world. |
+| `server/talk.js`, `server/quests.js`, `server/ai.js` | Conversations, markets and quests; Claude voices townsfolk with structured, role-limited replies. |
+| `server/powers.js`, `server/bases.js`, `server/director.js` | Skills, magic, powers, curses and mechs; bases, stations and crafting; the AI director. |
 | Interest management | In space, each client subscribes to the 3×3 sectors around it. On a planet, it hears only that planet. |
 | Movement | Clients simulate their own ship or pilot so controls feel instant (`shared/rules.js`). The server checks plausibility and snaps cheaters back. |
 | Client | Three.js (served from `node_modules`, no CDN). `client/space.js` and `client/surface.js` are the two scenes. `client/shipyard.js` is the 3D block editor. |

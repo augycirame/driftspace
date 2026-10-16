@@ -85,7 +85,7 @@ export class Combat {
     if (this.npcs.size >= MAX_NPCS) return null;
     const def = NPC_KINDS[kind];
     const eff = this.w.story.effects();
-    const k = kind === 'mothership' ? 1 : (0.7 + 0.3 * richness) * (kind === 'hollow' ? eraScale(eff.era) : 1);
+    const k = kind === 'mothership' ? 1 : (0.7 + 0.3 * richness) * (kind === 'hollow' ? eraScale(eff.era) : 1) * (this.w.director?.difficulty || 1);
     const hp = kind === 'mothership' ? this.w.story.mothership().hp : Math.round(def.hp * k);
     const npc = {
       id: 'n' + nextId++, kind, x, y, z, vx: 0, vy: 0, vz: 0, f: [0, 0, -1],
@@ -153,6 +153,8 @@ export class Combat {
   }
 
   spawnGroup(kind, p, count, rich, extra) {
+    // The director thins out spawns when the server is busy.
+    count = Math.max(1, Math.round(count * (this.w.director?.spawns || 1)));
     const a = Math.random() * Math.PI * 2;
     const cx = p.x + Math.cos(a) * 2600, cz = p.z + Math.sin(a) * 2600, cy = p.y + (Math.random() - 0.5) * 600;
     for (let i = 0; i < count; i++) {
@@ -331,7 +333,8 @@ export class Combat {
       this.w.broadcast({ t: 'chat', from: null, text: `${killer.name} landed the killing blow on the Hive Mothership!` });
       return;
     }
-    const bounty = Math.round(def.bounty * (0.7 + 0.3 * n.richness));
+    const bounty = Math.round(def.bounty * (0.7 + 0.3 * n.richness) * (this.w.director?.loot || 1));
+    this.w.director?.record('kills');
     const crew = this.w.parties.nearbyMembers(killer);
     const share = Math.round(bounty / crew.length);
     for (const p of crew) {
@@ -374,6 +377,7 @@ export class Combat {
     p.cargo = {};
     p.mining = null;
     p.dead = true;
+    this.w.director?.record('deaths');
     conn.send({ t: 'died', by, respawnIn: 4 });
     setTimeout(() => {
       if (!this.w.conns().includes(conn)) return;

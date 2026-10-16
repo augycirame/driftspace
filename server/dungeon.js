@@ -34,7 +34,7 @@ export class Dungeons {
     for (const e of layout.enemies) {
       const s = creatureStats(planet, e.species);
       const k = 1 + 0.25 * (depth - 1);
-      const hp = Math.round(s.hp * k * (e.boss ? 1 : 1.2));
+      const hp = Math.round(s.hp * k * (e.boss ? 1 : 1.2) * (this.w.director?.difficulty || 1));
       enemies.set(e.id, {
         id: e.id, species: e.species, x: e.x, z: e.z, home: [e.x, e.z], yaw: 0, hp, maxHp: hp,
         dmg: s.dmg * k, speed: s.speed * 0.9, size: s.size, boss: !!e.boss, aggro: false, lastAttack: 0, lastShot: 0,
@@ -158,7 +158,8 @@ export class Dungeons {
     this.toInstance(inst, { t: 'boom', x: e.x, y: e.size * 0.5, z: e.z, size: e.size * (e.boss ? 4 : 2), organic: true });
     this.w.discover(conn, [`creature:${e.species}`]);
     const p = conn.player, luck = 1 + (p.buffs?.luck || 0);
-    const reward = Math.round((e.boss ? 400 : 18) * inst.depth);
+    const reward = Math.round((e.boss ? 400 : 18) * inst.depth * (this.w.director?.loot || 1));
+    this.w.director?.record('kills');
     const crew = this.members(inst);
     for (const c of crew) {
       c.player.credits += Math.round(reward / crew.length);
@@ -187,6 +188,7 @@ export class Dungeons {
     if (p.hp > 0) return;
     p.dead = true;
     conn.send({ t: 'died', by: byName, respawnIn: 3 });
+    this.w.director?.record('deaths');
     setTimeout(() => {
       if (!this.w.conns().includes(conn) || p.mode !== 'dungeon') return;
       const i = this.inst(conn);

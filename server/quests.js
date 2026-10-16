@@ -312,7 +312,9 @@ export class Quests {
     const p = conn.player, pid = q.pid;
     q.status = 'done';
     const r = q.reward || {}, partial = q.partial || 1;
-    if (r.coins) { p.coins ||= {}; p.coins[q.realm] = (p.coins[q.realm] || 0) + Math.round(r.coins * partial); }
+    const lootK = this.w.director?.loot || 1;
+    if (r.coins) { p.coins ||= {}; p.coins[q.realm] = (p.coins[q.realm] || 0) + Math.round(r.coins * partial * lootK); }
+    this.w.director?.record('quests');
     if (r.credits) p.credits += Math.round(r.credits * partial);
     if (r.standing) this.politics.changeStanding(conn, pid, q.realm, Math.round(r.standing * partial));
     if (r.goods) { p.goods ||= {}; for (const [g, n] of Object.entries(r.goods)) p.goods[g] = (p.goods[g] || 0) + n; }
