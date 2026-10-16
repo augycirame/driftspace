@@ -14,7 +14,9 @@ import { GODS, PRAYER } from '../shared/content/factions.js';
 import { RELICS } from '../shared/content/relics.js';
 import { ALIEN_RACES, alienFolk, alienWarrior } from '../shared/content/aliens.js';
 import { townsOf, weatherAt, weatherInfo } from '../shared/towns.js';
+import { skillBonus } from '../shared/powers.js';
 import { Natives } from './natives.js';
+import { mechStats } from '../shared/powers.js';
 
 const GUARD_RESPAWN_MS = 5 * 60 * 1000;
 // Reputation change for killing a faction's soldier.
@@ -137,61 +139,86 @@ export class Surfaces {
     if (p.mode !== 'surface' || p.dead || ![m.x, m.y, m.z, m.yaw].every(num)) return;
     const now = Date.now();
     const dt = Math.max(0.05, (now - p.lastPos) / 1000);
-    if (Math.hypot(m.x - p.px, m.z - p.pz) > RUN_SPEED * dt * 1.5 + 3 || Math.max(Math.abs(m.x), Math.abs(m.z)) > SURFACE_HALF) {
+    if (Math.hypot(m.x - p.px, m.z - p.pz) > RUN_SPEED * this.w.powers.speedMult(p) * dt * 1.5 + 3 || Math.max(Math.abs(m.x), Math.abs(m.z)) > SURFACE_HALF) {
       conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
       p.lastPos = now;
       return;
     }
     const g = this.ground(p.planet, m.x, m.z);
-    p.px = m.x; p.pz = m.z; p.py = Math.max(g - 0.5, Math.min(m.y, g + 40));
+    p.px = m.x; p.pz = m.z; p.py = Math.max(g - 0.5, Math.min(m.y, g + (this.w.powers.flying(p) ? 160 : 40)));
     p.yaw = m.yaw;
     p.lastPos = now;
+  }
+
+  // What a ray from o along d hits first within range: terrain, a creature or (off Haven) a pilot.
+  trace(inst, conn, o, d, range) {
+    const p = conn.player, digs = this.saved(inst.planet.id).digs;
+    let maxT = range;
+    for (let t = 2; t < range; t += 2) {
+      if (o[1] + d[1] * t < heightAt(inst.planet, o[0] + d[0] * t, o[2] + d[2] * t, digs)) { maxT = t; break; }
+    }
+    let best = null, bestT = maxT;
+    const test = (cx, cy, cz, r, target) => {
+      const vx = cx - o[0], vy = cy - o[1], vz = cz - o[2];
+      const t = vx * d[0] + vy * d[1] + vz * d[2];
+      if (t < 0 || t > bestT) return;
+      if (Math.hypot(vx - d[0] * t, vy - d[1] * t, vz - d[2] * t) < r) { bestT = t; best = target; }
+    };
+    for (const c of inst.creatures.values()) test(c.x, c.y + c.size * 0.8, c.z, c.size + 0.4, { creature: c });
+    if (!inst.planet.starter) {
+      for (const oc of this.w.conns()) {
+        const q = oc.player;
+        if (oc === conn || q.mode !== 'surface' || q.planet !== p.planet || q.dead || this.w.parties.sameParty(p.key, q.key)) continue;
+        test(q.px, q.py + 1, q.pz, q.inMech ? 2.4 : 0.9, { conn: oc });
+      }
+    }
+    return { ...(best || {}), point: [o[0] + d[0] * bestT, o[1] + d[1] * bestT, o[2] + d[2] * bestT] };
   }
 
   shoot(conn, { dir }) {
     const p = conn.player;
     if (p.mode !== 'surface' || p.dead || !Array.isArray(dir) || dir.length !== 3 || !dir.every(num)) return;
+    if (p.wolf) return this.w.powers.claw(conn);
+    const pw = this.w.powers;
+    const now = Date.now();
+    const inst = this.instance(p.planet);
+    const l = Math.hypot(...dir) || 1;
+    const d0 = [dir[0] / l, dir[1] / l, dir[2] / l];
+    // A mech fires its shoulder cannon: one heavy shell that bursts on impact.
+    if (p.inMech) {
+      const mech = pw.mechItem(p);
+      if (!mech) { p.inMech = false; return; }
+      const ms = mechStats(mech.tier);
+      if (now - (p.lastShot || 0) < 1000 / ms.rate * 0.85) return;
+      p.lastShot = now;
+      const o = [p.px, p.py + 4.2, p.pz];
+      const hit = this.trace(inst, conn, o, d0, ms.range);
+      this.toPlanet(p.planet, { t: 'shot', by: conn.id, from: o, to: [hit.point], c: '#ffb060', w: 'cannon' });
+      this.toPlanet(p.planet, { t: 'boom', x: hit.point[0], y: hit.point[1], z: hit.point[2], size: ms.splash });
+      const dmg = ms.damage * pw.damageMult(p);
+      for (const c of [...inst.creatures.values()]) {
+        const dd = Math.hypot(c.x - hit.point[0], c.y + 1 - hit.point[1], c.z - hit.point[2]);
+        if (dd < ms.splash + c.size) this.hurtCreature(inst, c, dmg * (1 - dd / (ms.splash + c.size) * 0.5), conn);
+      }
+      if (hit.conn) this.hurtPlayer(hit.conn, dmg * 0.6, p.name);
+      return;
+    }
     const weapon = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
     if (!weapon) return conn.send({ t: 'toast', msg: 'No weapon equipped (Tab to open your gear).' });
     const ws = weaponStats(weapon);
-    ws.damage *= 1 + (p.buffs?.damage || 0);
-    const now = Date.now();
+    ws.damage *= pw.damageMult(p);
     if (now - (p.lastShot || 0) < 1000 / ws.rate * 0.85) return;
     p.lastShot = now;
-    const l = Math.hypot(...dir) || 1;
-    const d0 = [dir[0] / l, dir[1] / l, dir[2] / l];
     const o = [p.px, p.py + 1.5, p.pz];
-    const inst = this.instance(p.planet);
-    const digs = this.saved(p.planet).digs;
     const tracers = [];
     for (let i = 0; i < ws.pellets; i++) {
       const d = [d0[0] + (Math.random() - 0.5) * ws.spread * 2, d0[1] + (Math.random() - 0.5) * ws.spread * 2, d0[2] + (Math.random() - 0.5) * ws.spread * 2];
       const dl = Math.hypot(...d);
       d[0] /= dl; d[1] /= dl; d[2] /= dl;
-      // Terrain blocks shots.
-      let maxT = ws.range;
-      for (let t = 2; t < ws.range; t += 2) {
-        if (o[1] + d[1] * t < heightAt(inst.planet, o[0] + d[0] * t, o[2] + d[2] * t, digs)) { maxT = t; break; }
-      }
-      let best = null, bestT = maxT;
-      const test = (cx, cy, cz, r, target) => {
-        const vx = cx - o[0], vy = cy - o[1], vz = cz - o[2];
-        const t = vx * d[0] + vy * d[1] + vz * d[2];
-        if (t < 0 || t > bestT) return;
-        const dist = Math.hypot(vx - d[0] * t, vy - d[1] * t, vz - d[2] * t);
-        if (dist < r) { bestT = t; best = target; }
-      };
-      for (const c of inst.creatures.values()) test(c.x, c.y + c.size * 0.8, c.z, c.size + 0.4, { creature: c });
-      if (!inst.planet.starter) {
-        for (const oc of this.w.conns()) {
-          const q = oc.player;
-          if (oc === conn || q.mode !== 'surface' || q.planet !== p.planet || q.dead || this.w.parties.sameParty(p.key, q.key)) continue;
-          test(q.px, q.py + 1, q.pz, 0.9, { conn: oc });
-        }
-      }
-      tracers.push([o[0] + d[0] * bestT, o[1] + d[1] * bestT, o[2] + d[2] * bestT]);
-      if (best?.creature) this.hurtCreature(inst, best.creature, ws.damage, conn);
-      else if (best?.conn) this.hurtPlayer(best.conn, ws.damage, p.name);
+      const hit = this.trace(inst, conn, o, d, ws.range);
+      tracers.push(hit.point);
+      if (hit.creature) { this.hurtCreature(inst, hit.creature, ws.damage, conn); pw.dealt(conn, ws.damage); }
+      else if (hit.conn) { this.hurtPlayer(hit.conn, ws.damage, p.name); pw.dealt(conn, ws.damage); }
     }
     this.toPlanet(p.planet, { t: 'shot', by: conn.id, from: o, to: tracers, c: ws.color, w: weapon.type });
   }
@@ -210,6 +237,7 @@ export class Surfaces {
     inst.creatures.delete(c.id);
     this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
     this.w.quests.onKill(conn, inst.planet.id, c);
+    this.w.powers.gain(conn, 'combat', Math.max(2, Math.round(c.maxHp / 25)));
     if (c.behavior === 'native') {
       if (c.npc) inst.natives.delete(c.npc);
       this.w.politics.npcKilled(conn, inst.planet.id, c);
@@ -239,6 +267,8 @@ export class Surfaces {
   hurtPlayer(conn, dmg, byName) {
     const p = conn.player;
     if (p.dead) return;
+    dmg = this.w.powers.absorb(conn, dmg);
+    if (dmg <= 0 && p.hp > 0) return;
     const taken = dmg * (1 - (p.armor?.reduction || 0));
     p.hp -= taken;
     p.lastHurt = Date.now();
@@ -288,8 +318,11 @@ export class Surfaces {
         s.deposits[dep.id] = (s.deposits[dep.id] ?? dep.amount) - n;
         this.toPlanet(p.planet, { t: 'deposit', id: dep.id, amt: s.deposits[dep.id] });
       }
+      if (p.powerOn && p.power === 'titan') n *= 3;
+      if (Math.random() < skillBonus(p.skills, 'mining')) n += 1;
       p.cargo[ore] = (p.cargo[ore] || 0) + n;
       p.dug = (p.dug || 0) + n;
+      this.w.powers.gain(conn, 'mining', 1);
       this.w.tutorial(conn, 'dig', n);
     }
     this.w.dirty = true;
@@ -416,6 +449,7 @@ export class Surfaces {
     p.favor[st.god] = (p.favor[st.god] || 0) + 1;
     this.w.discover(conn, [`god:${st.god}`]);
     this.w.bless(conn, godBlessing(st.god), PRAYER.minutes);
+    this.w.powers.favored(conn, st.god);
     conn.send({ t: 'chat', from: null, text: `You pray to ${god.name}. ${god.lore}` });
     // The Empire calls the old gods heresy; the rebels have taken them back.
     this.w.changeRep(conn, { empire: -3, rebellion: 2 });
@@ -516,6 +550,7 @@ export class Surfaces {
 
   // Whether a creature wants to fight this pilot, and from how far away.
   aggroRange(c, p) {
+    if (this.w.powers.veiled(p)) return 0;
     if (c.behavior === 'native') return this.natives.aggroRange(this.instance(p.planet), c, p);
     if (c.aggro === p.key) return 60;
     switch (c.behavior) {
@@ -543,6 +578,7 @@ export class Surfaces {
       let tx, tz, speed = c.speed;
       const native = c.behavior === 'native';
       const wolf = native && this.natives.wolf(inst, c);
+      if ((c.slowUntil || 0) > now) speed *= 0.4;
       if (wolf) speed *= 1.6;
       // Armed natives with no pilot to fight take on raiders and their realm's enemies.
       const foe = native && !target ? this.natives.findFoe(inst, c) : null;
@@ -608,7 +644,7 @@ export class Surfaces {
       if (p.parked?.planet === me.planet) parked.push({ name: p.name, key: p.key, x: p.parked.x, z: p.parked.z, rev: p.shipRev });
       if (oc === conn || p.mode !== 'surface' || p.planet !== me.planet) continue;
       const w = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
-      players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0 });
+      players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0, wolf: !!p.wolf, mech: p.inMech ? this.w.powers.mechItem(p)?.tier || 1 : 0 });
     }
     conn.seenNatives ||= new Set();
     const creatures = inst ? [...inst.creatures.values()].map((c) => {

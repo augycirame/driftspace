@@ -102,9 +102,10 @@ export class Natives {
     if (c.bandit) return 40;
     if (c.raider) return this.politics.standing(p, c.defender) >= 25 || st <= -30 ? 40 : 0;
     if ((c.role === 'guard' || c.role === 'captain') && st <= -30) return 40;
+    // At night vampires and werewolves hunt outsiders, but never their own kind.
     if (this.night(inst)) {
-      if (c.people === 'vampire' && st < 20) return 28;
-      if (c.people === 'werewolf' && st < 10 && c.role !== 'ruler') return 34;
+      if (c.people === 'vampire' && st < 20 && p.curse !== 'vampire') return 28;
+      if (c.people === 'werewolf' && st < 10 && c.role !== 'ruler' && p.curse !== 'werewolf') return 34;
     }
     return 0;
   }

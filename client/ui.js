@@ -8,6 +8,7 @@ import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, 
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
 import { terrainOf as terrainOfPlanet } from '/shared/planet.js';
 import { PEOPLES, CLIMATES } from '/shared/content/peoples.js';
+import { SKILLS, SKILL_IDS, skillLevel, xpForLevel, SPELLS, POWERS, CURSES, mechStats, MAX_ENERGY } from '/shared/powers.js';
 import { climateOf, sunAt, weatherAt, weatherInfo, townsOf } from '/shared/towns.js';
 
 const $ = (id) => document.getElementById(id);
@@ -177,7 +178,7 @@ export class UI {
       for (const s of msg.stock) {
         const nm = itemName(s), color = TIERS[s.tier].color;
         const detail = s.kind === 'weapon' ? (() => { const w = weaponStats(s); return `${Math.round(w.damage * w.pellets)} dmg × ${w.rate}/s · range ${Math.round(w.range)}`; })()
-          : `+${Math.round(ARMOR_SLOTS[s.type].armor * s.tier * TIERS[s.tier].mult)} armor`;
+          : s.kind === 'mech' ? `${mechStats(s.tier).hp} hp · cannon ${Math.round(mechStats(s.tier).damage)} dmg · G to pilot` : `+${Math.round(ARMOR_SLOTS[s.type].armor * s.tier * TIERS[s.tier].mult)} armor`;
         const b = this.button(`${s.price} cr`, () => this.send({ t: 'buy', slot: s.slot }));
         b.disabled = you.credits < s.price;
         body.appendChild(this.row(`<b style="color:${color}">${esc(nm)}</b><br><span class="small dim">${detail}</span>`, b));
@@ -216,7 +217,7 @@ export class UI {
         const el = document.createElement('div');
         el.className = 'item' + (on ? ' eq' : '');
         const det = it.kind === 'relic' ? describeBonus(RELICS[it.type].bonus)
-          : it.kind === 'weapon' ? (() => { const s = weaponStats(it); return `${Math.round(s.damage * s.pellets)} dmg · ${s.rate}/s`; })() : `${ARMOR_SLOTS[it.type].name} armor`;
+          : it.kind === 'weapon' ? (() => { const s = weaponStats(it); return `${Math.round(s.damage * s.pellets)} dmg · ${s.rate}/s`; })() : it.kind === 'mech' ? `${mechStats(it.tier).hp} hp mech (G)` : `${ARMOR_SLOTS[it.type].name} armor`;
         el.innerHTML = `<b style="color:${TIERS[it.tier].color}">${esc(itemName(it))}</b><span class="dim">${det}</span>`;
         const slot = it.kind === 'weapon' ? 'weapon' : it.kind === 'relic' ? RELIC_SLOTS.find((r) => eq[r] === it.id) : it.type;
         el.appendChild(this.button(on ? 'Unequip' : 'Equip', () => this.send(on ? { t: 'unequip', slot } : { t: 'equip', id: it.id }), on ? 'alt' : ''));
@@ -564,6 +565,49 @@ export class UI {
     });
   }
 
+  // Skills, spellbook, superpower and curse (key U).
+  skills() {
+    this.open('skills', 'Skills & powers', (body) => {
+      const you = this.S.you;
+      const h = document.createElement('h3');
+      h.textContent = 'Skills';
+      body.appendChild(h);
+      for (const id of SKILL_IDS) {
+        const xp = you.skills?.[id] || 0, lvl = skillLevel(xp);
+        const next = xpForLevel(lvl + 1), cur = xpForLevel(lvl);
+        const el = document.createElement('div');
+        el.className = 'goal';
+        el.innerHTML = `<b>${SKILLS[id].name}</b> ${lvl} <span class="small dim">· grows by ${SKILLS[id].what} · +${Math.round(lvl * SKILLS[id].per * 100)}% ${SKILLS[id].bonus}</span><div class="bar"><span style="width:${lvl >= 20 ? 100 : (100 * (xp - cur)) / (next - cur)}%"></span></div>`;
+        body.appendChild(el);
+      }
+      const h2 = document.createElement('h3');
+      h2.textContent = `Spellbook · mana ${Math.round(you.mana || 0)}/${you.maxMana || 60}`;
+      body.appendChild(h2);
+      if (!(you.spells || []).length) body.appendChild(Object.assign(document.createElement('p'), { className: 'small dim', textContent: 'You know no spells. Mages, priests and healers in towns can teach you (talk to them).' }));
+      (you.spells || []).forEach((id, i) => {
+        const sp = SPELLS[id];
+        body.appendChild(this.row(`<b style="color:${sp.color}">${i < 4 ? `[${i + 1}] ` : ''}${esc(sp.name)}</b> <span class="small dim">${sp.mana} mana · ${esc(sp.text)}</span>`));
+      });
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Superpower';
+      body.appendChild(h3);
+      const pw = you.power && POWERS[you.power];
+      body.appendChild(Object.assign(document.createElement('p'), { className: 'small', innerHTML: pw ? `<b>${esc(pw.name)}</b> (F) · energy ${Math.round(you.energy || 0)}/${MAX_ENERGY}<br>${esc(pw.text)}` : 'None. Pray at a shrine of the old gods: whoever prays to one god three times receives that god’s power (flight, strength, invulnerability, speed or invisibility).' }));
+      if (you.curse) {
+        const h4 = document.createElement('h3');
+        h4.textContent = 'Curse';
+        body.appendChild(h4);
+        body.appendChild(Object.assign(document.createElement('p'), { className: 'small', innerHTML: `<b style="color:#ff8a9a">${esc(CURSES[you.curse].name)}</b><br>${esc(CURSES[you.curse].text)}` }));
+      }
+      if (you.mechMax) {
+        const h5 = document.createElement('h3');
+        h5.textContent = 'Mech';
+        body.appendChild(h5);
+        body.appendChild(Object.assign(document.createElement('p'), { className: 'small', textContent: `Frame integrity ${Math.round(you.mechHp)}/${you.mechMax}. G to climb in or out on a planet. It repairs itself while you're out of it.` }));
+      }
+    });
+  }
+
   dialogue(who) {
     this.open('dialogue', who, (body) => {
       body.className = 'dialogue';
@@ -590,7 +634,7 @@ export class UI {
         <tr><td>E</td><td>Interact / board your ship</td></tr><tr><td>Y</td><td>Shipyard (next to your ship)</td></tr>
         <tr><td>B</td><td>Build blocks</td></tr><tr><td>V</td><td>First / third person</td></tr></table>
         <h3>Anywhere</h3><table>
-        <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr><tr><td>R</td><td>Realms of this world (on a planet)</td></tr><tr><td>E</td><td>Talk to people in towns</td></tr>
+        <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr><tr><td>R</td><td>Realms of this world (on a planet)</td></tr><tr><td>U</td><td>Skills, spellbook and powers</td></tr><tr><td>1-4</td><td>Cast spells (on foot)</td></tr><tr><td>F / T / G</td><td>Superpower · werewolf form · mech</td></tr><tr><td>E</td><td>Talk to people in towns</td></tr>
         <tr><td>K</td><td>Codex: creatures, terrains, structures, relics, gods</td></tr>
         <tr><td>O</td><td>Options (art style, graphics quality)</td></tr>
         <tr><td>Enter</td><td>Chat (/p for party)</td></tr><tr><td>H</td><td>This manual</td></tr></table>
@@ -668,7 +712,14 @@ export class UI {
 
     const vbar = (lbl, v, max, color) => `<span class="small">${lbl}</span><div class="vbar"><span style="width:${Math.max(0, (100 * v) / Math.max(1, max))}%;background:${color}"></span></div>`;
     if (you.mode === 'space') $('vitals').innerHTML = vbar('Hull', you.hull, st.hp, '#ff8a5a') + (st.shield ? vbar('Shield', you.shield, st.shield, '#4bd8ff') : '');
-    else $('vitals').innerHTML = vbar('Health', you.hp, you.maxHp, '#78ffaa') + `<span class="small">Armor ${you.armor?.armor || 0}</span>`;
+    else {
+      let v = you.inMech ? vbar('Mech', you.mechHp, you.mechMax, '#ffb060') : vbar('Health', you.hp, you.maxHp, you.wolf ? '#e8c86a' : '#78ffaa');
+      if (you.ward) v += vbar('Ward', you.ward.hp, you.ward.max, '#ffe08a');
+      if ((you.spells || []).length) v += vbar('Mana', you.mana, you.maxMana, '#7a9aff');
+      if (you.power) v += vbar(you.powerOn ? 'Energy ●' : 'Energy', you.energy, MAX_ENERGY, '#e0a0ff');
+      v += `<span class="small">Armor ${you.armor?.armor || 0}${you.curse ? ` · <span style="color:#ff8a9a">${you.wolf ? 'Wolf form' : CURSES[you.curse].name}</span>` : ''}</span>`;
+      $('vitals').innerHTML = v;
+    }
 
     const ph = $('party-hud');
     ph.hidden = !S.party;

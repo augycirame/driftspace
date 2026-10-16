@@ -145,12 +145,12 @@ function onMessage(m) {
       Object.assign(S.you, m);
       if (m.shipRev && m.shipRev !== prevRev && yard.open) { yard.close(); ui.toast('Ship saved.'); }
       if (yard.open) yard.renderPanel();
-      if (m.armor && surface.selfMesh && surface.root) {
-        const armorKey = Math.round(m.armor.armor / 20);
+      if (surface.selfMesh && surface.root) {
+        const armorKey = `${Math.round((S.you.armor?.armor || 0) / 20)}|${S.you.wolf ? 'w' : ''}|${S.you.inMech ? S.you.mechTier : 0}`;
         if (armorKey !== surface.selfArmorKey) {
           surface.selfArmorKey = armorKey;
           surface.root.remove(surface.selfMesh);
-          surface.selfMesh = buildPerson(S.you.color, S.you.armor?.armor || 0);
+          surface.selfMesh = surface.formMesh(S.you.color, S.you.armor?.armor || 0, S.you.wolf, S.you.inMech ? S.you.mechTier : 0);
           surface.root.add(surface.selfMesh);
         }
       }
@@ -212,7 +212,7 @@ function onMessage(m) {
     case 'surface':
       if (!S.connected) break;
       surface.enter(m.planet, { digs: m.digs, blocks: m.blocks, deposits: m.deposits, looted: m.looted });
-      surface.selfArmorKey = Math.round((S.you.armor?.armor || 0) / 20);
+      surface.selfArmorKey = null;
       if (S.you.mode === 'surface') S.me = { x: S.you.px, y: S.you.py, z: S.you.pz, yaw: 0 };
       break;
     case 'dig': if (surface.planetId === m.planet) surface.applyDig(m.k, m.d); break;
@@ -271,6 +271,7 @@ function onMessage(m) {
     case 'loot': ui.toast(`Loot: ${m.name}`, 'loot'); break;
     case 'dialogue': ui.dialogue(m.who); break;
     case 'talk': ui.talk(m); break;
+    case 'spell': if (S.you?.mode === 'surface' && surface.root) surface.spellFx(m); break;
     case 'talk_line': ui.talkLine(m); break;
     case 'talk_end': if (ui.current?.kind === 'talk') ui.close(); break;
     case 'market': ui.market(m); break;
@@ -363,6 +364,7 @@ addEventListener('keydown', (e) => {
   if (k === 'k') { ui.current?.kind === 'codex' ? ui.close() : ui.codex(); return; }
   if (k === 'o') { ui.current?.kind === 'options' ? ui.close() : ui.options(); return; }
   if (k === 'm') { map.toggle(); return; }
+  if (k === 'u') { ui.current?.kind === 'skills' ? ui.close() : ui.skills(); return; }
   if (k === 'r' && S.you.mode === 'surface') { ui.current?.kind === 'politics' ? ui.close() : send({ t: 'politics' }); return; }
   if (overlayOpen()) return;
   keys.add(k);
@@ -382,6 +384,14 @@ addEventListener('keydown', (e) => {
     if (k === 'e') { const it = surface.interaction(); if (it) send({ t: 'interact', what: it.what, id: it.id }); }
     if (k === 'y') { const it = surface.interaction(); if (it?.what === 'ship') ui.onShipyard(); else ui.toast('Walk up to your ship to use the shipyard.'); }
     if (k === 'v') surface.firstPerson = !surface.firstPerson;
+    if (S.mode !== 'build' && k >= '1' && k <= '4') {
+      const spell = (S.you.spells || [])[+k - 1];
+      if (spell) { const d = surface.shotDir(); send({ t: 'cast', spell, dir: [d.x, d.y, d.z] }); }
+      else ui.toast('No spell in that slot. Mages and priests in towns teach magic (U for your spellbook).');
+    }
+    if (k === 'f') { if (S.you.power) send({ t: 'power' }); else ui.toast('You have no superpower. Pray at shrines: a god grants one to the devout.'); }
+    if (k === 't') send({ t: 'transform' });
+    if (k === 'g') send({ t: 'mech' });
   }
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
@@ -490,12 +500,13 @@ function surfaceFrame(dt, now) {
 
   if (active && S.mode !== 'build') {
     const w = you.inv.items.find((i) => i.id === you.inv.equipped.weapon);
-    if (mouse.left && w && now - lastShot > 1000 / weaponStats(w).rate) {
+    const rate = you.inMech ? 1.1 : you.wolf ? 2.2 : w ? weaponStats(w).rate : 0;
+    if (mouse.left && rate && now - lastShot > 1000 / rate) {
       lastShot = now;
       const d = surface.shotDir();
       send({ t: 'shoot', dir: [d.x, d.y, d.z] });
-    } else if (mouse.left && !w && now - lastShot > 2000) { lastShot = now; ui.toast('No weapon equipped. Press Tab to open your gear.'); }
-    if (mouse.right && now - lastDig > 220) {
+    } else if (mouse.left && !rate && now - lastShot > 2000) { lastShot = now; ui.toast('No weapon equipped. Press Tab to open your gear.'); }
+    if (mouse.right && !you.inMech && !you.wolf && now - lastDig > 220) {
       lastDig = now;
       const p = surface.digTarget();
       if (p) {
@@ -518,7 +529,7 @@ function surfaceFrame(dt, now) {
   if (!locked() && !overlayOpen()) prompt = 'Click to take the controls';
   const hint = S.mode === 'build'
     ? 'BUILD · left: place · right: remove · 1-6: block · B: exit'
-    : 'LMB shoot · RMB dig · E interact · B build · V view · H help';
+    : you.inMech ? 'MECH · LMB cannon · Space jump jets · G exit' : you.wolf ? 'WOLF · LMB claws · T change back' : `LMB shoot · RMB dig · E interact${(you.spells || []).length ? ' · 1-4 spells' : ''}${you.power ? ' · F power' : ''} · B build · U skills · H help`;
 
   const cos = Math.cos(surface.yaw), sin = Math.sin(surface.yaw), R = 140;
   const dot = (x, z, c, s) => { const dx = (x - me.x) / R, dz = (z - me.z) / R; return { x: dx * cos - dz * sin, y: dx * sin + dz * cos, c, s }; };
@@ -553,7 +564,8 @@ function dungeonFrame(dt, now) {
   if (!S.dead) dungeon.walk(dt, input, active ? look : { x: 0, y: 0 });
   if (active) {
     const w = you.inv.items.find((i) => i.id === you.inv.equipped.weapon);
-    if (mouse.left && w && now - lastShot > 1000 / weaponStats(w).rate) {
+    const rate = you.inMech ? 1.1 : you.wolf ? 2.2 : w ? weaponStats(w).rate : 0;
+    if (mouse.left && rate && now - lastShot > 1000 / rate) {
       lastShot = now;
       const d = dungeon.shotDir();
       send({ t: 'shoot', dir: [d.x, d.y, d.z] });

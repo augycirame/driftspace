@@ -29,6 +29,8 @@ import { Politics } from './politics.js';
 import { Talk } from './talk.js';
 import { Quests } from './quests.js';
 import { AI } from './ai.js';
+import { Powers } from './powers.js';
+import { skillBonus, SPELLS, POWERS } from '../shared/powers.js';
 import { townsOf } from '../shared/towns.js';
 
 const TICK_MS = 100;
@@ -53,6 +55,8 @@ export class World {
     this.surfaces = new Surfaces(this);
     this.talk = new Talk(this);
     this.quests = new Quests(this);
+    this.powers = new Powers(this);
+    this.skills = this.powers;
     this.ai = new AI(log);
     if (this.ai.enabled) log('AI townsfolk enabled');
     this.dungeons = new Dungeons(this);
@@ -177,6 +181,7 @@ export class World {
       mode: 'surface', planet: STARTER_PLANET_ID, parked: null, tutorial: 0, tutCount: 0, home: '0,0:st', joined: Date.now(),
       rep: { empire: 0, rebellion: 0 }, favor: {}, blessing: null, looted: {}, codex: {},
       standing: {}, coins: {}, goods: {}, quests: [], questsDone: 0,
+      skills: {}, spells: [], power: null, curse: null,
     };
   }
 
@@ -198,6 +203,7 @@ export class World {
       looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
       standing: { ...rec.standing }, coins: { ...rec.coins }, goods: { ...rec.goods },
       quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, charm: { ...rec.charm },
+      skills: { ...rec.skills }, spells: [...(rec.spells || [])], power: rec.power || null, curse: rec.curse || null, energy: rec.energy ?? 100, mana: rec.mana,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
     };
@@ -229,6 +235,7 @@ export class World {
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
       rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
       standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, charm: p.charm,
+      skills: p.skills, spells: p.spells, power: p.power, curse: p.curse, energy: p.energy, mana: p.mana,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
     this.dirty = true;
@@ -238,6 +245,7 @@ export class World {
   restat(p) {
     p.buffs = buffsOf(p.inv, p.blessing);
     p.stats = shipStats(p.ship, p.upg, this.story ? this.story.effects() : {}, p.buffs);
+    p.stats.maxSpeed *= 1 + skillBonus(p.skills, 'piloting');
     if (this.surfaces && p.inv) this.surfaces.refreshVitals(p);
     if (p.hull > p.stats.hp) p.hull = p.stats.hp;
     if (p.shield > p.stats.shield) p.shield = p.stats.shield;
@@ -295,6 +303,7 @@ export class World {
       tutorial: p.tutorial, tutCount: p.tutCount, home: p.home, kills: p.kills,
       rep: p.rep, favor: p.favor, blessing: p.blessing, buffs: p.buffs, codex: Object.keys(p.codex), war: this.data.war || { empire: 0, rebellion: 0 },
       standing: p.standing, coins: p.coins, goods: p.goods,
+      ...this.powers.view(p),
     };
   }
 
@@ -345,6 +354,11 @@ export class World {
   on_talk_opt(conn, m) { if (typeof m.id === 'string') this.talk.choose(conn, m); }
   on_talk_say(conn, m) { if (typeof m.id === 'string') this.talk.say(conn, m).catch((e) => this.log('talk error', e)); }
   on_quest_abandon(conn, m) { if (typeof m.id === 'string') this.quests.abandon(conn, m); }
+  on_cast(conn, m) { if (typeof m.spell === 'string') this.powers.cast(conn, m); }
+  on_power(conn) { this.powers.usePower(conn); }
+  on_transform(conn) { this.powers.transform(conn); }
+  on_claw(conn) { this.powers.claw(conn); }
+  on_mech(conn) { this.powers.toggleMech(conn); }
   on_market_buy(conn, m) { if (typeof m.good === 'string') this.talk.buy(conn, m); }
   on_market_sell(conn, m) { if (typeof m.good === 'string') this.talk.sell(conn, m); }
   on_exchange(conn, m) { if (m.dir === 'buy' || m.dir === 'sell') this.talk.exchange(conn, m); }
@@ -831,12 +845,19 @@ export class World {
         this.politics.startEvent(p.planet, ids[0], kind, 15, `(${kind} begins in the ${this.politics.realmDef(p.planet, ids[0]).name})`);
         return reply('Event started.');
       }
+      case 'mech': return this.giveItem(conn, makeItem('mech', 'mech', Number(args[0]) || 2));
+      case 'spells': p.spells = Object.keys(SPELLS); p.mana = 999; this.sendSelf(conn); return reply('You know every spell.');
+      case 'power': {
+        if (!POWERS[args[0]]) return reply(`Usage: /power ${Object.keys(POWERS).join('|')}`);
+        p.power = args[0]; p.energy = 100; this.sendSelf(conn); return reply(`Power: ${POWERS[args[0]].name}.`);
+      }
+      case 'curse': p.curse = ['vampire', 'werewolf'].includes(args[0]) ? args[0] : null; p.wolf = false; this.sendSelf(conn); return reply(`Curse: ${p.curse || 'none'}.`);
       case 'heal':
         p.hull = p.stats.hp; p.shield = p.stats.shield; p.hp = p.maxHp;
         this.sendSelf(conn);
         return reply('Healed.');
       default:
-        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /town, /war, /event, /heal');
+        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /town, /war, /event, /mech, /spells, /power, /curse, /heal');
     }
   }
 
@@ -892,6 +913,7 @@ export class World {
     this.story.tick(now);
     this.politics.tick(now);
     this.quests.tick(now);
+    this.powers.tick(dt, now);
     this.snapshots(now);
   }
 

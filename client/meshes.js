@@ -375,6 +375,43 @@ export function buildNative(n) {
   return buildHuman(o);
 }
 
+// A walking mech: reverse-jointed legs, an armored torso with a glowing cockpit, arms and a
+// shoulder cannon, painted in the pilot's color. About four and a half meters tall.
+export function buildMech(color = '#7aa0c8', tier = 1) {
+  const g = new THREE.Group();
+  const M = (c, o = {}) => { const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.55, metalness: 0.35, ...o }); m.userData.paint = 0; return m; };
+  const paint = M(new THREE.Color(color).lerp(new THREE.Color('#8a9098'), 0.35)), steel = M('#5a6068'), dark = M('#2e3238');
+  const glow = new THREE.MeshBasicMaterial({ color: tier >= 4 ? '#ffb347' : '#8ae8ff' });
+  const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = g) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); parent.add(m); return m; };
+  const legs = [];
+  for (const sx of [-1, 1]) {
+    const leg = new THREE.Group();
+    leg.position.set(sx * 0.75, 2.3, 0);
+    g.add(leg);
+    add(new THREE.BoxGeometry(0.55, 1.3, 0.7), paint, 0, -0.55, -0.15, 0.35, 0, 0, leg);
+    add(new THREE.SphereGeometry(0.32, 10, 8), steel, 0, -1.15, -0.35, 0, 0, 0, leg);
+    add(new THREE.BoxGeometry(0.4, 1.2, 0.45), steel, 0, -1.65, 0.05, -0.4, 0, 0, leg);
+    add(new THREE.BoxGeometry(0.7, 0.25, 1.1), dark, 0, -2.2, -0.1, 0, 0, 0, leg);
+    legs.push(leg);
+  }
+  add(new THREE.BoxGeometry(1.9, 1.3, 1.5), paint, 0, 3.0, 0);
+  add(new THREE.BoxGeometry(1.5, 0.5, 1.2), steel, 0, 2.2, 0);
+  add(new THREE.BoxGeometry(1.0, 0.55, 0.15), glow, 0, 3.25, -0.78);
+  add(new THREE.BoxGeometry(2.3, 0.3, 1.2), steel, 0, 3.7, 0.05);
+  for (const sx of [-1, 1]) {
+    add(new THREE.SphereGeometry(0.42, 10, 8), steel, sx * 1.25, 3.4, 0);
+    add(new THREE.BoxGeometry(0.42, 1.2, 0.5), paint, sx * 1.35, 2.7, -0.15, 0.25);
+    add(new THREE.BoxGeometry(0.36, 0.5, 0.9), dark, sx * 1.35, 2.05, -0.55);
+  }
+  // Shoulder cannon.
+  add(new THREE.BoxGeometry(0.55, 0.5, 1.0), steel, 0.75, 4.15, 0.1);
+  add(new THREE.CylinderGeometry(0.13, 0.16, 1.7, 10).rotateX(Math.PI / 2), dark, 0.75, 4.2, -0.9);
+  add(new THREE.BoxGeometry(0.3, 0.12, 0.3), glow, -0.6, 3.95, 0.2);
+  g.userData.legs = legs;
+  g.userData.mech = true;
+  return addInkHull(g);
+}
+
 // A werewolf in its night form: a hunched, shaggy wolf-man.
 export function buildWerewolf(fur = '#6a5a4a') {
   const g = new THREE.Group();

@@ -85,6 +85,8 @@ export class Talk {
     if (c.role === 'smith' || c.role === 'captain') o.push(['arms', 'Let me see your arms and armor.']);
     if (CHANGERS.includes(c.role)) o.push(['exchange', 'I need to change money.']);
     if (c.role === 'healer' || c.role === 'priest') o.push(['heal', 'Can you tend my wounds?']);
+    if (this.w.powers && this.w.powers.teachOptions(c, conn.player).length) o.push(['learn', 'Can you teach me magic?']);
+    if (c.role === 'priest' && conn.player.curse) o.push(['cure', 'Can you lift my curse?']);
     if (this.w.quests) o.unshift(...this.w.quests.talkOptions(conn, c));
     o.push(['news', 'What news?']);
     if (this.w.quests) o.push(['work', 'Is there any work?']);
@@ -140,6 +142,7 @@ export class Talk {
     if (typeof opt !== 'string') return;
     if (opt.startsWith('accept:')) return this.w.quests.accept(conn, cur, opt.slice(7));
     if (opt.startsWith('q:')) return this.w.quests.talkAction(conn, cur, opt);
+    if (opt.startsWith('spell:')) return this.w.powers.learn(conn, cur, opt.slice(6));
     switch (opt) {
       case 'decline': return say(pickOne(['Suit yourself.', 'Another time, then.']), { options: this.options(conn, c) });
       case 'trade': if (TRADERS.includes(c.role)) return this.market(conn, pid, town); break;
@@ -160,6 +163,14 @@ export class Talk {
         return say('There. Try not to get stabbed again so soon.');
       }
       case 'news': return say(this.rumor(conn, pid, c));
+      case 'learn': {
+        const list = this.w.powers.teachOptions(c, p);
+        if (!list.length) return say('I have nothing more to teach you.');
+        return say(c.role === 'mage' ? 'The weave can be learned, if you have the coin and the patience.' : 'The gods lend their power to those who ask humbly.', {
+          options: [...list.map(([id, sp]) => [`spell:${id}`, `${sp.name}: ${sp.text} (${this.w.powers.priceIn(pid, c.realm, sp.price)} ${this.coinName(pid, c.realm)})`]), ['bye', 'Farewell.']],
+        });
+      }
+      case 'cure': return this.w.powers.cure(conn, cur);
       case 'work': if (this.w.quests) return this.w.quests.offer(conn, cur); break;
       case 'bye': conn.talk = null; return conn.send({ t: 'talk_end' });
     }

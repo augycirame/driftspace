@@ -8,7 +8,7 @@ import {
 } from '/shared/planet.js';
 import { ORES, BLOCKS, SURFACE_GRID } from '/shared/rules.js';
 import { PLAYER_SPEED, RUN_SPEED } from '/shared/items.js';
-import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, buildWerewolf, label, healthBar, setHealth, glowSprite } from './meshes.js';
+import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, buildWerewolf, buildMech, label, healthBar, setHealth, glowSprite } from './meshes.js';
 import { townsOf, townFootprints, insideFootprint, sunAt, weatherAt, weatherInfo } from '/shared/towns.js';
 import { buildTown, realmColor } from './towns.js';
 import { CREATURES } from '/shared/content/creatures.js';
@@ -300,7 +300,7 @@ export class SurfaceView {
     this.root = null;
     for (const m of [this.others, this.creatures, this.parked]) m.clear();
     this.fx.clear();
-    this.precip = null; this.precipKind = null; this.towns = []; this.footprints = [];
+    this.precip = null; this.precipKind = null; this.towns = []; this.footprints = []; this.wardMesh = null;
     this.dayLevel = this.lightLevel = this.fogLevel = null;
     this.planetId = null;
   }
@@ -458,6 +458,39 @@ export class SurfaceView {
       mesh.add(lb);
       this.root.add(mesh);
       this.structures.push({ st, def, mesh });
+    }
+  }
+
+  // A pilot in their current form: on foot, as a wolf, or in a mech.
+  formMesh(color, armor, wolf, mech) {
+    if (mech) return buildMech(color, mech);
+    if (wolf) return buildWerewolf('#5a4a3a');
+    return buildPerson(color, armor || 0);
+  }
+
+  // Spells, powers, transformations and claws, drawn from server messages.
+  spellFx(m) {
+    const fx = this.fx;
+    if (m.from && m.to && (m.kind === 'firebolt' || m.kind === 'sunlance')) {
+      fx.tracer(m.from, m.to, m.c);
+      fx.explosion(m.to[0], m.to[1], m.to[2], m.kind === 'sunlance' ? 2.4 : 1.6, m.c);
+    } else if (m.kind === 'blink') {
+      fx.spark(m.from[0], m.from[1], m.from[2], m.c, 3);
+      fx.spark(m.to[0], m.to[1], m.to[2], m.c, 3);
+    } else if (m.points) {
+      for (let i = 1; i < m.points.length; i++) {
+        const a = m.points[i - 1], b = m.points[i];
+        const mid = [(a[0] + b[0]) / 2 + (Math.random() - 0.5) * 1.5, (a[1] + b[1]) / 2 + (Math.random() - 0.5) * 1.5, (a[2] + b[2]) / 2 + (Math.random() - 0.5) * 1.5];
+        fx.tracer(a, mid, m.c); fx.tracer(mid, b, m.c);
+        fx.spark(b[0], b[1], b[2], m.c, 1.5);
+      }
+    } else if (m.at) {
+      const [x, y, z] = m.at;
+      if (m.kind === 'frost') {
+        for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; fx.spark(x + Math.cos(a) * m.radius * 0.7, y, z + Math.sin(a) * m.radius * 0.7, m.c, 2); }
+        fx.explosion(x, y, z, m.radius * 0.5, m.c);
+      } else if (m.kind === 'claw' || m.kind === 'mech') fx.spark(x, y, z, m.kind === 'mech' ? m.c : '#ffffff', m.kind === 'mech' ? 3 : 1.4);
+      else fx.explosion(x, y, z, m.kind === 'transform' ? 2.5 : 1.4, m.c);
     }
   }
 
@@ -685,7 +718,8 @@ export class SurfaceView {
     const me = this.S.me;
     this.yaw -= look.x * 0.0025;
     this.pitch = Math.max(-1.3, Math.min(1.2, this.pitch - look.y * 0.0025));
-    const speed = input.run ? RUN_SPEED : PLAYER_SPEED;
+    const you = this.S.you || {};
+    const speed = (input.run ? RUN_SPEED : PLAYER_SPEED) * (you.speedMult || 1);
     const f = input.fwd || 0, s = input.strafe || 0;
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
     let mx = (-sin * f + cos * s), mz = (-cos * f - sin * s);
@@ -696,8 +730,12 @@ export class SurfaceView {
     if (!this.blockedAt(nx, me.z, me.y) && Math.abs(nx) < lim) me.x = nx;
     if (!this.blockedAt(me.x, nz, me.y) && Math.abs(nz) < lim) me.z = nz;
     const ground = this.groundAt(me.x, me.z, me.y);
-    if (input.jump && this.onGround) { this.vel.y = 10.5; this.onGround = false; }
-    this.vel.y -= 28 * dt;
+    if (input.jump && this.onGround) { this.vel.y = you.inMech ? 15 : you.wolf ? 13 : 10.5; this.onGround = false; }
+    // Flight: hold jump to climb, let go to glide down slowly.
+    if (you.flying) {
+      if (input.jump) this.vel.y = Math.min(this.vel.y + 40 * dt, 12);
+      else this.vel.y = Math.max(this.vel.y - 12 * dt, -4);
+    } else this.vel.y -= 28 * dt;
     me.y += this.vel.y * dt;
     if (me.y <= ground) { me.y = ground; this.vel.y = 0; this.onGround = true; }
     else if (me.y - ground > 0.15) this.onGround = false;
@@ -721,6 +759,16 @@ export class SurfaceView {
     this.selfMesh.position.set(me.x, me.y, me.z);
     this.selfMesh.rotation.y = this.yaw;
     this.selfMesh.visible = !this.firstPerson && !S.dead;
+    const legs = this.selfMesh.userData.mech ? this.selfMesh.userData.legs : null;
+    if (legs) legs.forEach((l, i) => { l.rotation.x = this.moving ? Math.sin(t * 5 + i * Math.PI) * 0.35 : 0; });
+    if (S.you?.ward && !this.wardMesh) {
+      this.wardMesh = new THREE.Mesh(new THREE.SphereGeometry(1.4, 20, 14), new THREE.MeshBasicMaterial({ color: '#ffe08a', transparent: true, opacity: 0.18, depthWrite: false }));
+      this.root.add(this.wardMesh);
+    }
+    if (this.wardMesh) {
+      this.wardMesh.visible = !!S.you?.ward;
+      this.wardMesh.position.set(me.x, me.y + 1, me.z);
+    }
     if (this.drift) this.drift.userData.update(t, this.camera.position);
     const moving = Math.hypot(this.vel.x, this.vel.z);
     for (const [i, tail] of (this.selfMesh.userData.tails || []).entries()) {
@@ -746,12 +794,12 @@ export class SurfaceView {
       if (o.mode !== 'surface') continue;
       seen.add(o.id);
       let v = this.others.get(o.id);
-      const armorKey = Math.round((o.armor || 0) / 20);
+      const armorKey = `${Math.round((o.armor || 0) / 20)}|${o.wolf ? 'w' : ''}|${o.mech || 0}`;
       if (!v || v.armorKey !== armorKey) {
         if (v) this.root.remove(v.group);
-        const group = buildPerson(o.color, o.armor);
+        const group = this.formMesh(o.color, o.armor, o.wolf, o.mech);
         const lb = label(o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color, 0.8);
-        lb.position.y = 2.5;
+        lb.position.y = o.mech ? 5.4 : o.wolf ? 3 : 2.5;
         group.add(lb);
         const bar = healthBar(0.04);
         bar.position.y = 2.2;
@@ -857,13 +905,14 @@ export class SurfaceView {
 
   updateCamera() {
     const me = this.S.me;
-    const eye = new THREE.Vector3(me.x, me.y + 1.65, me.z);
+    const eye = new THREE.Vector3(me.x, me.y + (this.S.you?.inMech ? 3.4 : 1.65), me.z);
     const dir = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
     if (this.firstPerson) {
       this.camera.position.copy(eye);
     } else {
       const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-      const cam = eye.clone().addScaledVector(dir, -5).addScaledVector(right, 0.9).add(new THREE.Vector3(0, 0.6, 0));
+      const far = this.S.you?.inMech ? 10 : this.S.you?.wolf ? 6 : 5;
+      const cam = eye.clone().addScaledVector(dir, -far).addScaledVector(right, 0.9).add(new THREE.Vector3(0, this.S.you?.inMech ? 2.6 : 0.6, 0));
       const g = standHeight(this.planet, cam.x, cam.z, this.data.digs) + 0.4;
       if (cam.y < g) cam.y = g;
       this.camera.position.copy(cam);

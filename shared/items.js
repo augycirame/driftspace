@@ -37,6 +37,7 @@ export const RUN_SPEED = 17;
 export function itemName(it) {
   if (it.kind === 'relic') return RELICS[it.type]?.name || 'Unknown relic';
   const tier = TIERS[it.tier].name;
+  if (it.kind === 'mech') return `${tier} Mech Frame`;
   return it.kind === 'weapon' ? `${tier} ${WEAPONS[it.type].name}` : `${tier} ${ARMOR_SLOTS[it.type].name}`;
 }
 
@@ -102,6 +103,7 @@ export const godBlessing = (god) => ({ god, name: `Blessing of ${GODS[god].name.
 
 export function itemValue(it) {
   if (it.kind === 'relic') return 300 * Math.pow(2, (RELICS[it.type]?.rarity || 1) - 1);
+  if (it.kind === 'mech') return Math.round(1600 * Math.pow(1.8, it.tier - 1));
   const base = it.kind === 'weapon' ? WEAPONS[it.type].price : ARMOR_SLOTS[it.type].price;
   return Math.round(base * Math.pow(2.2, it.tier - 1));
 }
@@ -135,6 +137,8 @@ export function shopStock(shopId, richness, day) {
     stock.push({ kind: 'weapon', type, tier: Math.max(1, maxTier - (rng() < 0.5 ? 1 : 0)) });
   }
   for (const type of ARMOR_SLOT_IDS) stock.push({ kind: 'armor', type, tier: Math.max(1, maxTier - (rng() < 0.4 ? 1 : 0)) });
+  // Stations and the Haven trade hall sell mech frames.
+  if (shopId.endsWith(':st') || shopId === 'haven-landing') stock.push({ kind: 'mech', type: 'mech', tier: Math.max(1, maxTier - 1) });
   return stock.map((s, i) => ({ ...s, slot: i, price: Math.round(itemValue(s) * 1.6) }));
 }
 
