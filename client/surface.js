@@ -11,6 +11,7 @@ import { PLAYER_SPEED, RUN_SPEED } from '/shared/items.js';
 import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, buildWerewolf, buildMech, label, healthBar, setHealth, glowSprite } from './meshes.js';
 import { townsOf, townFootprints, insideFootprint, sunAt, weatherAt, weatherInfo } from '/shared/towns.js';
 import { buildTown, realmColor } from './towns.js';
+import { gravityOf } from '/shared/planet.js';
 import { CREATURES } from '/shared/content/creatures.js';
 import { STRUCTURES } from '/shared/content/structures.js';
 import { GODS } from '/shared/content/factions.js';
@@ -178,6 +179,21 @@ function animeDrift(planet, style) {
 
 const HALF_V = (VERTS - 1) / 2;
 const blockGeo = new THREE.BoxGeometry(SURFACE_GRID, SURFACE_GRID, SURFACE_GRID);
+// Furniture and gadgets get their own shapes; everything else is a cube.
+const G = SURFACE_GRID;
+const part = (geo, color, x = 0, y = 0, z = 0, glow = false) => {
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, roughness: 0.7, emissive: glow ? color : '#000000', emissiveIntensity: glow ? 0.8 : 0 }));
+  m.position.set(x, y, z);
+  return m;
+};
+const SPECIAL_BLOCKS = {
+  door: () => { const g = new THREE.Group(); g.add(part(new THREE.BoxGeometry(G, G, G * 0.18), '#6a4a2a')); g.add(part(new THREE.SphereGeometry(0.08, 8, 6), '#d8b048', G * 0.3, 0, G * 0.12)); return g; },
+  bed: () => { const g = new THREE.Group(); g.add(part(new THREE.BoxGeometry(G * 0.9, G * 0.3, G * 0.95), '#7a5a3a', 0, -G * 0.35, 0)); g.add(part(new THREE.BoxGeometry(G * 0.85, G * 0.12, G * 0.9), '#b84a4a', 0, -G * 0.15, 0.02)); g.add(part(new THREE.BoxGeometry(G * 0.5, G * 0.1, G * 0.25), '#f0ead8', 0, -G * 0.07, -G * 0.3)); return g; },
+  chest: () => { const g = new THREE.Group(); g.add(part(new THREE.BoxGeometry(G * 0.8, G * 0.5, G * 0.55), '#9a7038', 0, -G * 0.25, 0)); g.add(part(new THREE.BoxGeometry(G * 0.84, G * 0.08, G * 0.6), '#5a4a3a', 0, 0.02, 0)); g.add(part(new THREE.BoxGeometry(0.12, 0.16, 0.05), '#d8b048', 0, -G * 0.1, G * 0.29)); return g; },
+  bench: () => { const g = new THREE.Group(); g.add(part(new THREE.BoxGeometry(G * 0.95, G * 0.12, G * 0.6), '#7a5a3a', 0, -G * 0.08, 0)); for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(part(new THREE.BoxGeometry(0.1, G * 0.4, 0.1), '#5a4030', sx * G * 0.4, -G * 0.32, sz * G * 0.24)); g.add(part(new THREE.BoxGeometry(0.3, 0.2, 0.2), '#4a4a50', -G * 0.2, G * 0.05, 0)); return g; },
+  turret: () => { const g = new THREE.Group(); g.add(part(new THREE.CylinderGeometry(G * 0.4, G * 0.48, G * 0.5, 10), '#4a5260', 0, -G * 0.25, 0)); g.add(part(new THREE.SphereGeometry(G * 0.28, 12, 10), '#5a6270', 0, G * 0.1, 0)); g.add(part(new THREE.CylinderGeometry(0.08, 0.1, G * 0.7, 8).rotateX(Math.PI / 2), '#2e3238', 0, G * 0.12, -G * 0.35)); g.add(part(new THREE.SphereGeometry(0.07, 6, 4), '#ff6a4a', 0, G * 0.32, 0, true)); return g; },
+  banner: () => { const g = new THREE.Group(); g.add(part(new THREE.CylinderGeometry(0.06, 0.06, G * 2.4, 6), '#5a4030', 0, G * 0.7, 0)); g.add(part(new THREE.BoxGeometry(G * 0.6, G * 0.9, 0.04), '#e8c547', G * 0.32, G * 1.3, 0)); return g; },
+};
 const blockMats = {};
 function blockMat(id) {
   if (!blockMats[id]) {
@@ -186,6 +202,7 @@ function blockMat(id) {
       color: d.color, roughness: 0.6, metalness: 0.2, transparent: !!d.transparent, opacity: d.transparent ? 0.5 : 1,
       emissive: d.glow ? d.color : '#000000', emissiveIntensity: d.glow ? 0.8 : 0,
     });
+    if (d.stone) blockMats[id].userData.stone = 2.2;
   }
   return blockMats[id];
 }
@@ -276,6 +293,7 @@ export class SurfaceView {
     this.buildRelic();
     this.buildStructures();
     this.buildTowns();
+    this.gravity = gravityOf(planet);
     this.blocks = new THREE.Group();
     this.root.add(this.blocks);
     for (const [cell, blk] of Object.entries(data.blocks)) this.addBlock(cell, blk);
@@ -671,9 +689,12 @@ export class SurfaceView {
 
   addBlock(cell, blk) {
     const [gx, gy, gz] = cell.split(',').map(Number);
-    const m = new THREE.Mesh(blockGeo, blockMat(blk.b));
+    const old = this.blocks.children.find((c) => c.userData.cell === cell);
+    if (old) this.blocks.remove(old);
+    const m = SPECIAL_BLOCKS[blk.b] ? SPECIAL_BLOCKS[blk.b]() : new THREE.Mesh(blockGeo, blockMat(blk.b));
     m.position.set((gx + 0.5) * SURFACE_GRID, (gy + 0.5) * SURFACE_GRID, (gz + 0.5) * SURFACE_GRID);
-    m.userData = { cell };
+    m.userData = { cell, block: blk.b, owner: blk.o };
+    m.traverse((o) => { o.userData.cell = cell; });
     this.blocks.add(m);
   }
 
@@ -688,7 +709,7 @@ export class SurfaceView {
 
   // ---- walking ------------------------------------------------------------------------------
 
-  hasBlock(gx, gy, gz) { return !!this.data.blocks[`${gx},${gy},${gz}`]; }
+  hasBlock(gx, gy, gz) { const b = this.data.blocks[`${gx},${gy},${gz}`]; return !!b && !BLOCKS[b.b]?.passable; }
 
   // Ground under a point: terrain, liquid, or the top of a player-built block.
   groundAt0(f) { return standHeight(this.planet, f.x, f.z, this.data.digs); }
@@ -730,12 +751,12 @@ export class SurfaceView {
     if (!this.blockedAt(nx, me.z, me.y) && Math.abs(nx) < lim) me.x = nx;
     if (!this.blockedAt(me.x, nz, me.y) && Math.abs(nz) < lim) me.z = nz;
     const ground = this.groundAt(me.x, me.z, me.y);
-    if (input.jump && this.onGround) { this.vel.y = you.inMech ? 15 : you.wolf ? 13 : 10.5; this.onGround = false; }
+    if (input.jump && this.onGround) { this.vel.y = (you.inMech ? 15 : you.wolf ? 13 : 10.5) * Math.sqrt(this.gravity); this.onGround = false; }
     // Flight: hold jump to climb, let go to glide down slowly.
     if (you.flying) {
       if (input.jump) this.vel.y = Math.min(this.vel.y + 40 * dt, 12);
       else this.vel.y = Math.max(this.vel.y - 12 * dt, -4);
-    } else this.vel.y -= 28 * dt;
+    } else this.vel.y -= 28 * this.gravity * dt;
     me.y += this.vel.y * dt;
     if (me.y <= ground) { me.y = ground; this.vel.y = 0; this.onGround = true; }
     else if (me.y - ground > 0.15) this.onGround = false;
@@ -984,6 +1005,13 @@ export class SurfaceView {
       if (d < bd) { bd = d; bestN = c; }
     }
     if (bestN) return { what: 'npc', id: bestN.id, text: `E: talk to ${this.creatures.get(bestN.id)?.name || bestN.n?.name || 'them'}` };
+    for (const m of this.blocks?.children || []) {
+      const t = m.userData.block;
+      if (t !== 'chest' && t !== 'bench') continue;
+      if (!near(m.position.x, m.position.z, 3.2)) continue;
+      if (t === 'chest') return m.userData.owner === this.S.you.name ? { what: 'chest', id: m.userData.cell, text: 'E: open your chest' } : { text: `${m.userData.owner}'s chest` };
+      return { what: 'bench', text: 'E: craft at the workbench (C)' };
+    }
     if (parked && parked.planet === this.planetId && near(parked.x, parked.z, 14)) return { what: 'ship', text: 'E: board ship and take off · Y: shipyard' };
     for (const { st, def } of this.structures || []) {
       if (!near(st.x, st.z, st.radius + 6)) continue;

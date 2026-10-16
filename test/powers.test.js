@@ -99,3 +99,57 @@ test('a mech takes the hits and fires a cannon', () => {
   world.powers.toggleMech(conn);
   assert.ok(!p.inMech);
 });
+
+test('bases: claims, beds, chests, crafting and player stations', () => {
+  const { world, conn, p, haven } = setup('Builder');
+  const S = world.surfaces;
+  p.px = 150; p.pz = 150; p.py = S.ground(haven.id, 150, 150);
+  p.cargo = { wood: 100, stone: 50, iron: 200, gold: 20, hide: 20, copper: 40 };
+  const g = (v) => Math.floor(v / 2);
+  const gy = g(p.py) + 1;
+  S.build(conn, { gx: g(150), gy, gz: g(152), block: 'banner' });
+  S.build(conn, { gx: g(152), gy, gz: g(150), block: 'bed' });
+  S.build(conn, { gx: g(148), gy, gz: g(150), block: 'chest' });
+  S.build(conn, { gx: g(150), gy, gz: g(148), block: 'bench' });
+  const blocks = S.saved(haven.id).blocks;
+  assert.equal(Object.values(blocks).filter((b) => b.o === 'Builder').length, 4);
+  assert.ok(p.bed);
+  // Someone else can't dig or build on claimed land.
+  const inbox2 = [];
+  const other = world.connect((m) => inbox2.push(m), () => {});
+  world.join(other, 'rival', 'Rival');
+  other.player.px = 152; other.player.pz = 152; other.player.py = p.py;
+  other.player.cargo = { wood: 10 };
+  S.build(other, { gx: g(154), gy, gz: g(154), block: 'wood' });
+  assert.equal(Object.values(blocks).filter((b) => b.o === 'Rival').length, 0);
+  assert.ok(inbox2.some((m) => m.t === 'toast' && /claimed/.test(m.msg)));
+  // Store and take materials.
+  const chestCell = Object.entries(blocks).find(([, b]) => b.b === 'chest')[0];
+  world.bases.chest(conn, { cell: chestCell, dir: 'put', item: 'stone' });
+  assert.equal(blocks[chestCell].inv.stone, 50);
+  const keep = p.cargo;
+  p.cargo = {};
+  world.bases.chest(conn, { cell: chestCell, dir: 'take', item: 'stone', n: 10 });
+  assert.equal(p.cargo.stone, 10);
+  p.cargo = keep;
+  // Craft a weapon at the workbench.
+  const items = p.inv.items.length;
+  world.bases.craft(conn, { recipe: 'sword', tier: 1, type: 'plasma' });
+  assert.equal(p.inv.items.length, items + 1);
+  assert.equal(p.inv.items.at(-1).type, 'plasma');
+  // A docking port in space makes a station.
+  world.surfaces.takeoff(conn);
+  p.cargo.iron = 100; p.cargo.copper = 40; p.cargo.gold = 10;
+  const cx = Math.floor(p.x / 8), cy = Math.floor(p.y / 8), cz = Math.floor((p.z - 60) / 8);
+  world.on_build(conn, { gx: cx, gy: cy, gz: cz, block: 'dock' });
+  const st = world.dockedStation(p);
+  assert.ok(st, 'the docking port works as a station');
+});
+
+test('black holes pull, burn and fling you across the galaxy', async () => {
+  const { gravityAt } = await import('../shared/rules.js');
+  const hole = { x: 0, y: 0, z: 0, r: 150, type: 'Black hole' };
+  const near = Math.hypot(...gravityAt(hole, 400, 0, 0)), far = Math.hypot(...gravityAt(hole, 3000, 0, 0));
+  assert.ok(near > far && far > 0);
+  assert.deepEqual(gravityAt({ ...hole, type: 'Yellow star' }, 50000, 0, 0), [0, 0, 0]);
+});

@@ -11,7 +11,7 @@ import {
 import { hashString } from '../shared/rng.js';
 import {
   ORES, ORE_IDS, BLOCKS, UPGRADES, SHIP_PARTS, STARTER_SHIP, WORLD_GRID, BUILD_RANGE, DOCK_RANGE, JUMP_COOLDOWN_MS,
-  ASTEROID_REGROW_MS, INVENTORY_SIZE, shipStats, validateShip, cargoTotal, canAfford, upgradeCost, qNormalize,
+  ASTEROID_REGROW_MS, INVENTORY_SIZE, shipStats, validateShip, cargoTotal, canAfford, upgradeCost, qNormalize, blockAllowed,
 } from '../shared/rules.js';
 import { makeItem, makeRelic, itemName, itemValue, shopStock, buffsOf, RELIC_SLOTS } from '../shared/items.js';
 import { FACTIONS, HOLY_CAPITAL, HOSTILE_REP, factionTitle } from '../shared/content/factions.js';
@@ -30,6 +30,7 @@ import { Talk } from './talk.js';
 import { Quests } from './quests.js';
 import { AI } from './ai.js';
 import { Powers } from './powers.js';
+import { Bases } from './bases.js';
 import { skillBonus, SPELLS, POWERS } from '../shared/powers.js';
 import { townsOf } from '../shared/towns.js';
 
@@ -56,6 +57,7 @@ export class World {
     this.talk = new Talk(this);
     this.quests = new Quests(this);
     this.powers = new Powers(this);
+    this.bases = new Bases(this);
     this.skills = this.powers;
     this.ai = new AI(log);
     if (this.ai.enabled) log('AI townsfolk enabled');
@@ -203,7 +205,7 @@ export class World {
       looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
       standing: { ...rec.standing }, coins: { ...rec.coins }, goods: { ...rec.goods },
       quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, charm: { ...rec.charm },
-      skills: { ...rec.skills }, spells: [...(rec.spells || [])], power: rec.power || null, curse: rec.curse || null, energy: rec.energy ?? 100, mana: rec.mana,
+      bed: rec.bed || null, skills: { ...rec.skills }, spells: [...(rec.spells || [])], power: rec.power || null, curse: rec.curse || null, energy: rec.energy ?? 100, mana: rec.mana,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
     };
@@ -235,7 +237,7 @@ export class World {
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
       rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
       standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, charm: p.charm,
-      skills: p.skills, spells: p.spells, power: p.power, curse: p.curse, energy: p.energy, mana: p.mana,
+      bed: p.bed, skills: p.skills, spells: p.spells, power: p.power, curse: p.curse, energy: p.energy, mana: p.mana,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
     this.dirty = true;
@@ -359,6 +361,8 @@ export class World {
   on_transform(conn) { this.powers.transform(conn); }
   on_claw(conn) { this.powers.claw(conn); }
   on_mech(conn) { this.powers.toggleMech(conn); }
+  on_chest(conn, m) { this.bases.chest(conn, m); }
+  on_craft(conn, m) { if (typeof m.recipe === 'string') this.bases.craft(conn, m); }
   on_market_buy(conn, m) { if (typeof m.good === 'string') this.talk.buy(conn, m); }
   on_market_sell(conn, m) { if (typeof m.good === 'string') this.talk.sell(conn, m); }
   on_exchange(conn, m) { if (m.dir === 'buy' || m.dir === 'sell') this.talk.exchange(conn, m); }
@@ -404,7 +408,7 @@ export class World {
   on_build(conn, { gx, gy, gz, block }) {
     const p = conn.player;
     const def = BLOCKS[block];
-    if (p.mode !== 'space' || !def || ![gx, gy, gz].every(Number.isInteger)) return;
+    if (p.mode !== 'space' || !def || !blockAllowed(block, 'space') || ![gx, gy, gz].every(Number.isInteger)) return;
     if (conn.buildBudget <= 0) return;
     conn.buildBudget--;
     const cx = (gx + 0.5) * WORLD_GRID, cy = (gy + 0.5) * WORLD_GRID, cz = (gz + 0.5) * WORLD_GRID;
@@ -460,7 +464,11 @@ export class World {
     if (p.mode !== 'space' || p.dead) return null;
     const [sx, sz] = sectorOf(p.x, p.z);
     const st = generateSector(sx, sz, this.seed).station;
-    if (!st || Math.hypot(st.x - p.x, st.y - p.y, st.z - p.z) > DOCK_RANGE) return null;
+    if (!st || Math.hypot(st.x - p.x, st.y - p.y, st.z - p.z) > DOCK_RANGE) {
+      // Player-built stations: any docking port.
+      const dock = this.bases?.nearbyDock(p);
+      return dock ? { id: dock.id, name: `${dock.owner}'s station`, richness: 1, faction: null, player: true, owner: dock.owner, x: dock.x, y: dock.y, z: dock.z } : null;
+    }
     if (!allowHostile && this.hostileTo(st.faction, p)) return null;
     return st;
   }
@@ -509,7 +517,9 @@ export class World {
     const p = conn.player;
     if (!this.needDock(conn)) return;
     let earned = 0;
-    for (const k of ORE_IDS) { earned += (p.cargo[k] || 0) * ORES[k].price; p.cargo[k] = 0; }
+    // Building materials stay aboard; player stations pay 80%.
+    const rate = this.dockedStation(p)?.player ? 0.8 : 1;
+    for (const k of ORE_IDS) { if (ORES[k].keep) continue; earned += Math.floor((p.cargo[k] || 0) * ORES[k].price * rate); delete p.cargo[k]; }
     p.credits += earned;
     this.dirty = true;
     this.sendSelf(conn);
@@ -845,6 +855,12 @@ export class World {
         this.politics.startEvent(p.planet, ids[0], kind, 15, `(${kind} begins in the ${this.politics.realmDef(p.planet, ids[0]).name})`);
         return reply('Event started.');
       }
+      case 'pos': {
+        const x = Number(args[0]), z = Number(args[1]);
+        if (p.mode !== 'surface' || !Number.isFinite(x) || !Number.isFinite(z)) return reply('Usage (on a planet): /pos <x> <z>');
+        p.px = x; p.pz = z; p.py = this.surfaces.ground(p.planet, x, z);
+        return conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
+      }
       case 'mech': return this.giveItem(conn, makeItem('mech', 'mech', Number(args[0]) || 2));
       case 'spells': p.spells = Object.keys(SPELLS); p.mana = 999; this.sendSelf(conn); return reply('You know every spell.');
       case 'power': {
@@ -914,7 +930,36 @@ export class World {
     this.politics.tick(now);
     this.quests.tick(now);
     this.powers.tick(dt, now);
+    this.bases.tick(dt, now);
+    this.gravityTick(dt, now);
     this.snapshots(now);
+  }
+
+  // Black holes: the accretion disk burns, and whatever crosses the horizon comes out somewhere else.
+  gravityTick(dt, now) {
+    for (const c of this.conns()) {
+      const p = c.player;
+      if (p.mode !== 'space' || p.dead) continue;
+      const [sx, sz] = sectorOf(p.x, p.z);
+      const star = generateSector(sx, sz, this.seed).star;
+      if (!star || star.type !== 'Black hole') continue;
+      const d = Math.hypot(star.x - p.x, star.y - p.y, star.z - p.z);
+      if (d < star.r * 1.2) {
+        const a = Math.random() * Math.PI * 2, far = 15 + Math.floor(Math.random() * 25);
+        const tx = sx + Math.round(Math.cos(a) * far), tz = sz + Math.round(Math.sin(a) * far);
+        p.hull = Math.max(1, p.stats.hp * 0.25);
+        p.shield = 0;
+        this.teleport(c, ...this.arrivalPoint(tx, tz));
+        c.send({ t: 'transmission', title: 'THROUGH THE EVENT HORIZON', lines: ['Time stretches. Your ship screams. Then: stars, different stars.', `You were thrown ${far} sectors across the galaxy. Your hull barely held.`] });
+        this.sendSelf(c);
+      } else if (d < star.r * 3.2) {
+        p.shield = 0;
+        p.hull -= 35 * dt;
+        p.lastHit = now;
+        if (Math.random() < 0.15) c.send({ t: 'you', hull: p.hull, shield: 0 });
+        if (p.hull <= 0) this.combat.destroyPlayerShip(c, 'a black hole');
+      }
+    }
   }
 
   mineTick(dt, now) {

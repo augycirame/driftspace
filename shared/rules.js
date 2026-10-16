@@ -8,6 +8,13 @@ export const ORES = {
   gold:      { name: 'Gold',      color: '#f2cf4a', price: 15 },
   voidstone: { name: 'Voidstone', color: '#b86bff', price: 60 },
   aetherium: { name: 'Aetherium', color: '#5fffe0', price: 150 },
+  // Materials from planet surfaces.
+  wood:      { name: 'Wood',      color: '#a07a4a', price: 1, keep: true },
+  stone:     { name: 'Stone',     color: '#9a948a', price: 1, keep: true },
+  hide:      { name: 'Hide',      color: '#c89a6a', price: 4, keep: true },
+  silver:    { name: 'Silver',    color: '#d8e0ea', price: 22 },
+  crystal:   { name: 'Mana crystal', color: '#8affe8', price: 40 },
+  mithril:   { name: 'Mithril',   color: '#bfe0ff', price: 90 },
 };
 export const ORE_IDS = Object.keys(ORES);
 
@@ -23,7 +30,34 @@ export const BLOCKS = {
   light:  { name: 'Light',        color: '#fff2a8', cost: { iron: 1, copper: 2 }, glow: true },
   gold:   { name: 'Gilded plate', color: '#e8c547', cost: { gold: 2 } },
   beacon: { name: 'Beacon',       color: '#ff5fa2', cost: { iron: 10, gold: 3 }, beacon: true, glow: true },
+  // Base building on planets.
+  wood:   { name: 'Timber wall',  color: '#8a6440', cost: { wood: 2 }, where: 'surface' },
+  stone:  { name: 'Stone wall',   color: '#8e8a82', cost: { stone: 3 }, where: 'surface', stone: true },
+  door:   { name: 'Door',         color: '#6a4a2a', cost: { wood: 3, iron: 1 }, where: 'surface', passable: true },
+  bed:    { name: 'Bed',          color: '#b84a4a', cost: { wood: 4, hide: 2 }, where: 'surface', bed: true },
+  chest:  { name: 'Storage chest', color: '#9a7038', cost: { wood: 6, iron: 2 }, where: 'surface', chest: true },
+  bench:  { name: 'Workbench',    color: '#7a5a3a', cost: { wood: 8, iron: 4 }, where: 'surface', bench: true },
+  banner: { name: 'Claim banner', color: '#e8c547', cost: { wood: 4, gold: 2 }, where: 'surface', claim: 30 },
+  // Both on planets and in space.
+  turret: { name: 'Turret',       color: '#4a5260', cost: { iron: 12, copper: 6, gold: 1 }, turret: true },
+  // Space stations.
+  dock:   { name: 'Docking port', color: '#7fb4ff', cost: { iron: 30, copper: 10, gold: 4 }, where: 'space', dock: true, glow: true },
+  reactor: { name: 'Reactor',     color: '#5fffe0', cost: { iron: 20, voidstone: 2 }, where: 'space', glow: true },
 };
+export const blockAllowed = (id, mode) => !!BLOCKS[id] && (!BLOCKS[id].where || BLOCKS[id].where === mode);
+export const TURRET = { surface: { range: 32, damage: 9, every: 0.55 }, space: { range: 700, damage: 14, every: 0.6 } };
+export const DOCK_PORT_RANGE = 140;
+
+// Gravity in space: stars pull gently, black holes hard. Returns acceleration [x, y, z].
+export function gravityAt(star, x, y, z) {
+  if (!star) return [0, 0, 0];
+  const dx = star.x - x, dy = star.y - y, dz = star.z - z;
+  const d = Math.hypot(dx, dy, dz) || 1;
+  const hole = star.type === 'Black hole';
+  if (d > star.r * (hole ? 30 : 9)) return [0, 0, 0];
+  const a = Math.min(hole ? 420 : 60, (hole ? 380 : 26) * (star.r * star.r) / (d * d));
+  return [dx / d * a, dy / d * a, dz / d * a];
+}
 export const BLOCK_IDS = Object.keys(BLOCKS);
 
 // ---- ships are built from blocks; their stats come from what they're made of ------------------

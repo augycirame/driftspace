@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { generateSector, sectorOf, sectorKey, planetPos } from '/shared/universe.js';
-import { ORES, STARTER_SHIP, JUMP_COOLDOWN_MS, BLOCK_IDS, shipStats, cargoTotal } from '/shared/rules.js';
+import { ORES, STARTER_SHIP, JUMP_COOLDOWN_MS, BLOCK_IDS, shipStats, cargoTotal, blockAllowed } from '/shared/rules.js';
 import { weaponStats } from '/shared/items.js';
 import { deposits } from '/shared/planet.js';
 import { SpaceView } from './space.js';
@@ -275,6 +275,7 @@ function onMessage(m) {
     case 'talk_line': ui.talkLine(m); break;
     case 'talk_end': if (ui.current?.kind === 'talk') ui.close(); break;
     case 'market': ui.market(m); break;
+    case 'chest': if (surface.data?.blocks[m.cell]) surface.data.blocks[m.cell].inv = m.inv; if (ui.current?.kind === 'chest') ui.chest(m.cell, m.inv); break;
     case 'quests': S.quests = m.list; ui.refresh(); break;
     case 'politics': ui.politics(m.view); break;
     case 'story': {
@@ -370,7 +371,13 @@ addEventListener('keydown', (e) => {
   keys.add(k);
   if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
   if (k === 'b' && S.you.mode !== 'dungeon') toggleBuild();
-  if (S.mode === 'build' && k >= '1' && k <= String(BLOCK_IDS.length)) { S.block = BLOCK_IDS[+k - 1]; ui.renderPalette(); }
+  if (S.mode === 'build') {
+    // The palette only offers blocks that work here (planet or space): 1-9, 0, and [ ] to cycle.
+    const list = BLOCK_IDS.filter((id) => blockAllowed(id, S.you.mode === 'space' ? 'space' : 'surface'));
+    const i = k === '0' ? 9 : k >= '1' && k <= '9' ? +k - 1 : -1;
+    if (i >= 0 && list[i]) { S.block = list[i]; ui.renderPalette(); }
+    if (k === '[' || k === ']') { const j = list.indexOf(S.block); S.block = list[(j + (k === ']' ? 1 : list.length - 1)) % list.length]; ui.renderPalette(); }
+  }
   if (S.you.mode === 'space') {
     if (k === 'e' && space.nearbyStation()) send({ t: 'dock' });
     if (k === 'l') {
@@ -381,7 +388,13 @@ addEventListener('keydown', (e) => {
     if (k === 'e') { const it = dungeon.interaction(); if (it) send({ t: 'interact', what: it.what, id: it.id }); }
     if (k === 'v') dungeon.firstPerson = !dungeon.firstPerson;
   } else {
-    if (k === 'e') { const it = surface.interaction(); if (it) send({ t: 'interact', what: it.what, id: it.id }); }
+    if (k === 'e') {
+      const it = surface.interaction();
+      if (it?.what === 'chest') ui.chest(it.id, surface.data.blocks[it.id]?.inv || {});
+      else if (it?.what === 'bench') ui.craft();
+      else if (it?.what) send({ t: 'interact', what: it.what, id: it.id });
+    }
+    if (k === 'c' && S.mode !== 'build') ui.current?.kind === 'craft' ? ui.close() : ui.craft();
     if (k === 'y') { const it = surface.interaction(); if (it?.what === 'ship') ui.onShipyard(); else ui.toast('Walk up to your ship to use the shipyard.'); }
     if (k === 'v') surface.firstPerson = !surface.firstPerson;
     if (S.mode !== 'build' && k >= '1' && k <= '4') {

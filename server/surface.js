@@ -4,7 +4,7 @@
 import { findPlanet, planetPos, generateSector } from '../shared/universe.js';
 import {
   CELL, SURFACE_HALF, MAX_DIG, SETTLEMENT, SETTLEMENT_RADIUS,
-  standHeight, heightAt, deposits, digOre, landingSpot, vkey, terrainOf, faunaOf, structuresOf, creatureStats,
+  standHeight, heightAt, deposits, digOre, landingSpot, vkey, terrainOf, faunaOf, structuresOf, creatureStats, profileOf,
 } from '../shared/planet.js';
 import { BLOCKS, SURFACE_GRID, canAfford, cargoTotal } from '../shared/rules.js';
 import { weaponStats, armorRating, randomItem, randomRelic, makeRelic, godBlessing, PLAYER_HP, RUN_SPEED } from '../shared/items.js';
@@ -14,6 +14,8 @@ import { GODS, PRAYER } from '../shared/content/factions.js';
 import { RELICS } from '../shared/content/relics.js';
 import { ALIEN_RACES, alienFolk, alienWarrior } from '../shared/content/aliens.js';
 import { townsOf, weatherAt, weatherInfo } from '../shared/towns.js';
+import { blockAllowed } from '../shared/rules.js';
+import { floraFor } from '../shared/planet.js';
 import { skillBonus } from '../shared/powers.js';
 import { Natives } from './natives.js';
 import { mechStats } from '../shared/powers.js';
@@ -248,6 +250,7 @@ export class Surfaces {
       return;
     }
     this.w.discover(conn, [`creature:${c.species}`]);
+    if (!c.faction && c.shape !== 'golem' && Math.random() < 0.6) { conn.player.cargo.hide = (conn.player.cargo.hide || 0) + 1 + Math.floor(c.size); }
     if (c.faction) {
       this.w.changeRep(conn, SOLDIER_KILL_REP[c.faction]);
       this.w.warScore(c.faction === 'empire' ? 'rebellion' : 'empire');
@@ -282,8 +285,9 @@ export class Surfaces {
       if (!this.w.conns().includes(conn) || p.mode !== 'surface') return;
       p.dead = false;
       p.hp = p.maxHp;
-      const park = p.parked;
-      p.px = park.x + 9; p.pz = park.z + 3; p.py = this.ground(p.planet, p.px, p.pz);
+      const park = p.parked, bed = this.w.bases.bedSpot(p, p.planet);
+      if (bed) [p.px, p.pz] = bed; else { p.px = park.x + 9; p.pz = park.z + 3; }
+      p.py = this.ground(p.planet, p.px, p.pz);
       conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
       this.w.sendSelf(conn);
     }, 3000);
@@ -298,6 +302,17 @@ export class Surfaces {
     if (Math.hypot(x - p.px, z - p.pz) > 10 || Math.max(Math.abs(x), Math.abs(z)) > SURFACE_HALF - 40) return;
     const inst = this.instance(p.planet);
     if (inst.planet.starter && Math.hypot(x, z) < SETTLEMENT_RADIUS) return conn.send({ t: 'toast', msg: 'No digging inside Haven Landing.' });
+    const claim = this.w.bases.claimedBy(p.planet, x, z, p);
+    if (claim) return conn.send({ t: 'toast', msg: `This land is claimed by ${claim}.` });
+    // Chopping: digging at a tree yields wood and leaves the tree standing.
+    if (!raise && this.nearTree(inst.planet, x, z)) {
+      if (cargoTotal(p.cargo) >= p.stats.cargo) return conn.send({ t: 'toast', msg: 'Cargo hold full.' });
+      const n = p.powerOn && p.power === 'titan' ? 3 : 1;
+      p.cargo.wood = (p.cargo.wood || 0) + n;
+      this.w.powers.gain(conn, 'mining', 1);
+      this.w.dirty = true;
+      return this.w.sendSelf(conn);
+    }
     const ix = Math.round(x / CELL), iz = Math.round(z / CELL), k = vkey(ix, iz);
     const s = this.saved(p.planet);
     const cur = s.digs[k] || 0;
@@ -318,6 +333,12 @@ export class Surfaces {
         s.deposits[dep.id] = (s.deposits[dep.id] ?? dep.amount) - n;
         this.toPlanet(p.planet, { t: 'deposit', id: dep.id, amt: s.deposits[dep.id] });
       }
+      // Stone comes up with everything; deep digs on the right worlds turn up rare materials.
+      const tags = profileOf(inst.planet).tags, deep = cur < -6;
+      if (Math.random() < 0.35) p.cargo.stone = (p.cargo.stone || 0) + 1;
+      if (tags.some((t) => ['crystal', 'holy'].includes(t)) && Math.random() < 0.06) p.cargo.crystal = (p.cargo.crystal || 0) + 1;
+      if (tags.some((t) => ['ash', 'bone', 'scorched'].includes(t)) && Math.random() < 0.08) p.cargo.silver = (p.cargo.silver || 0) + 1;
+      if (deep && tags.some((t) => ['rock', 'crystal', 'fire'].includes(t)) && Math.random() < 0.05) p.cargo.mithril = (p.cargo.mithril || 0) + 1;
       if (p.powerOn && p.power === 'titan') n *= 3;
       if (Math.random() < skillBonus(p.skills, 'mining')) n += 1;
       p.cargo[ore] = (p.cargo[ore] || 0) + n;
@@ -330,19 +351,33 @@ export class Surfaces {
     this.toPlanet(p.planet, { t: 'dig', planet: p.planet, k, d: s.digs[k] });
   }
 
+  nearTree(planet, x, z) {
+    const tx = Math.floor(x / 40), tz = Math.floor(z / 40);
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      for (const f of floraFor(planet, tx + dx, tz + dz)) {
+        if ((f.kind === 'tree' || f.kind === 'palm' || f.kind === 'deadtree') && Math.hypot(f.x - x, f.z - z) < 2.6 * f.s) return true;
+      }
+    }
+    return false;
+  }
+
   build(conn, { gx, gy, gz, block }) {
     const p = conn.player;
     const def = BLOCKS[block];
-    if (p.mode !== 'surface' || !def || ![gx, gy, gz].every(Number.isInteger)) return;
+    if (p.mode !== 'surface' || !def || !blockAllowed(block, 'surface') || ![gx, gy, gz].every(Number.isInteger)) return;
     const cx = (gx + 0.5) * SURFACE_GRID, cy = (gy + 0.5) * SURFACE_GRID, cz = (gz + 0.5) * SURFACE_GRID;
     if (Math.hypot(cx - p.px, cy - p.py, cz - p.pz) > 14) return conn.send({ t: 'toast', msg: 'Too far away to build there.' });
     const inst = this.instance(p.planet);
     if (inst.planet.starter && Math.hypot(cx, cz) < SETTLEMENT_RADIUS) return conn.send({ t: 'toast', msg: 'No building inside Haven Landing.' });
     const s = this.saved(p.planet), cell = `${gx},${gy},${gz}`;
     if (s.blocks[cell] || Object.keys(s.blocks).length > 20000) return;
-    if (!canAfford(p.cargo, def.cost)) return conn.send({ t: 'toast', msg: `Not enough ore for ${def.name}.` });
+    const claim = this.w.bases.claimedBy(p.planet, cx, cz, p);
+    if (claim) return conn.send({ t: 'toast', msg: `This land is claimed by ${claim}.` });
+    if (inst.towns?.some((t) => Math.hypot(t.x - cx, t.z - cz) < t.radius + 6)) return conn.send({ t: 'toast', msg: 'The townsfolk won\'t let you build inside their town.' });
+    if (!canAfford(p.cargo, def.cost)) return conn.send({ t: 'toast', msg: `Not enough materials for ${def.name}.` });
     for (const [k, v] of Object.entries(def.cost)) p.cargo[k] -= v;
     s.blocks[cell] = { b: block, o: p.name };
+    this.w.bases.placedOnSurface(conn, p.planet, cell, s.blocks[cell]);
     this.w.dirty = true;
     this.w.sendSelf(conn);
     this.toPlanet(p.planet, { t: 'sblock', planet: p.planet, cell, data: s.blocks[cell] });
@@ -358,6 +393,7 @@ export class Surfaces {
     const cx = (gx + 0.5) * SURFACE_GRID, cz = (gz + 0.5) * SURFACE_GRID;
     if (Math.hypot(cx - p.px, cz - p.pz) > 14) return;
     delete s.blocks[cell];
+    this.w.bases.removedFromSurface(conn, p.planet, cell, blk);
     for (const [k, v] of Object.entries(BLOCKS[blk.b].cost)) p.cargo[k] = (p.cargo[k] || 0) + v;
     this.w.dirty = true;
     this.w.sendSelf(conn);

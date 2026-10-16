@@ -2,11 +2,12 @@
 // story transmissions, toasts and chat.
 
 import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
-import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford } from '/shared/rules.js';
+import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford, blockAllowed } from '/shared/rules.js';
+import { RECIPES, RECIPE_IDS, recipeCost } from '/shared/crafting.js';
 import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, itemName, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
 import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle, ALIEN_RACES, DUNGEON_THEMES } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
-import { terrainOf as terrainOfPlanet } from '/shared/planet.js';
+import { terrainOf as terrainOfPlanet, gravityOf } from '/shared/planet.js';
 import { PEOPLES, CLIMATES } from '/shared/content/peoples.js';
 import { SKILLS, SKILL_IDS, skillLevel, xpForLevel, SPELLS, POWERS, CURSES, mechStats, MAX_ENERGY } from '/shared/powers.js';
 import { climateOf, sunAt, weatherAt, weatherInfo, townsOf } from '/shared/towns.js';
@@ -146,6 +147,8 @@ export class UI {
       body.appendChild(this.row(`Contribute to <b>${esc(S.story?.title || 'the story')}</b><br><span class="small dim">${wants.length ? 'Wanted: ' + wants.map((o) => ORES[o].name).join(', ') + '. Pays 25% over market.' : 'Nothing wanted right now.'}</span>`, cb));
       body.appendChild(this.row('Gear shop<br><span class="small dim">Weapons and armor</span>', this.button('Browse', () => this.send({ t: 'shop' }))));
       body.appendChild(this.row('Shipyard<br><span class="small dim">Rebuild your ship block by block</span>', this.button('Open', () => { this.close(); this.onShipyard?.(); })));
+      body.appendChild(this.row('Fabricator<br><span class="small dim">Craft gear and mechs from materials</span>', this.button('Craft', () => this.craft())));
+      if (docked.station.player) body.appendChild(Object.assign(document.createElement('p'), { className: 'small dim', textContent: `A station built by ${docked.station.owner}. Repairs are free; ore sells at 80%.` }));
       if (docked.station.capital) {
         const b = HOLY_CAPITAL.blessing;
         const bb = this.button(`Tithe ${b.tithe} cr`, () => this.send({ t: 'benediction' }));
@@ -565,6 +568,61 @@ export class UI {
     });
   }
 
+  // A storage chest: move materials between it and your cargo hold.
+  chest(cell, inv) {
+    this.chestState = { cell, inv };
+    this.open('chest', 'Storage chest', (body) => {
+      const st = this.chestState, you = this.S.you;
+      body.appendChild(this.row(`Your hold: ${cargoTotal(you.cargo)}/${you.stats.cargo}`, this.button('Store everything', () => this.send({ t: 'chest', cell: st.cell, dir: 'put', item: 'all' }))));
+      const ids = [...new Set([...Object.keys(st.inv), ...Object.keys(you.cargo)])].filter((k) => ORES[k]);
+      for (const k of ids) {
+        const wrap = document.createElement('span');
+        const put = this.button('Store', () => this.send({ t: 'chest', cell: st.cell, dir: 'put', item: k }), 'alt');
+        put.disabled = !you.cargo[k];
+        const take = this.button('Take', () => this.send({ t: 'chest', cell: st.cell, dir: 'take', item: k }));
+        take.disabled = !st.inv[k];
+        wrap.append(put, take);
+        body.appendChild(this.row(`<span style="color:${ORES[k].color}">${ORES[k].name}</span> <span class="small dim">chest ${st.inv[k] || 0} · hold ${you.cargo[k] || 0}</span>`, wrap));
+      }
+      if (!ids.length) body.appendChild(Object.assign(document.createElement('p'), { className: 'dim', textContent: 'Empty.' }));
+    });
+  }
+
+  // Crafting from materials (key C on a planet, or Fabricator at a station).
+  craft() {
+    this.craftTier ||= 1;
+    this.open('craft', 'Crafting', (body) => {
+      const you = this.S.you;
+      const maxTier = Math.min(5, 2 + Math.floor(skillLevel(you.skills?.crafting) / 4));
+      const p = document.createElement('p');
+      p.className = 'small dim';
+      p.textContent = `Craft at your own workbench, in a town with a smith, or aboard a station. Your crafting skill allows tier ${maxTier}. Materials come from digging (stone, silver, mithril, mana crystal), chopping trees (wood) and hunting (hide).`;
+      body.appendChild(p);
+      const tiers = document.createElement('div');
+      tiers.className = 'talkopts';
+      for (let t = 1; t <= 5; t++) {
+        const b = this.button(`Tier ${t}${t === this.craftTier ? ' ✓' : ''}`, () => { this.craftTier = t; this.rerender(); }, t === this.craftTier ? '' : 'alt');
+        b.disabled = t > maxTier;
+        tiers.appendChild(b);
+      }
+      body.appendChild(tiers);
+      const tier = this.craftTier;
+      for (const id of RECIPE_IDS) {
+        const r = RECIPES[id], cost = recipeCost(id, tier);
+        const ok = canAfford(you.cargo, cost);
+        const costTxt = Object.entries(cost).map(([k, v]) => `<span style="color:${(you.cargo[k] || 0) >= v ? '#9fe0a0' : '#ff9a8a'}">${v} ${ORES[k]?.name || k}</span>`).join(', ');
+        const wrap = document.createElement('span');
+        const types = r.makes === 'weapon' ? ['pistol', 'rifle', 'shotgun', 'plasma', 'railgun'] : r.makes === 'armor' ? ['helmet', 'chest', 'legs'] : [null];
+        for (const type of types) {
+          const b = this.button(type ? type[0].toUpperCase() + type.slice(1) : 'Craft', () => this.send({ t: 'craft', recipe: id, tier, type }), ok ? '' : 'alt');
+          b.disabled = !ok;
+          wrap.appendChild(b);
+        }
+        body.appendChild(this.row(`<b>${esc(r.name)}</b> <span class="small dim">tier ${tier}</span><br><span class="small">${costTxt}</span>`, wrap));
+      }
+    });
+  }
+
   // Skills, spellbook, superpower and curse (key U).
   skills() {
     this.open('skills', 'Skills & powers', (body) => {
@@ -634,7 +692,7 @@ export class UI {
         <tr><td>E</td><td>Interact / board your ship</td></tr><tr><td>Y</td><td>Shipyard (next to your ship)</td></tr>
         <tr><td>B</td><td>Build blocks</td></tr><tr><td>V</td><td>First / third person</td></tr></table>
         <h3>Anywhere</h3><table>
-        <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr><tr><td>R</td><td>Realms of this world (on a planet)</td></tr><tr><td>U</td><td>Skills, spellbook and powers</td></tr><tr><td>1-4</td><td>Cast spells (on foot)</td></tr><tr><td>F / T / G</td><td>Superpower · werewolf form · mech</td></tr><tr><td>E</td><td>Talk to people in towns</td></tr>
+        <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr><tr><td>R</td><td>Realms of this world (on a planet)</td></tr><tr><td>U</td><td>Skills, spellbook and powers</td></tr><tr><td>C</td><td>Crafting (on a planet)</td></tr><tr><td>1-4</td><td>Cast spells (on foot)</td></tr><tr><td>F / T / G</td><td>Superpower · werewolf form · mech</td></tr><tr><td>E</td><td>Talk to people in towns</td></tr>
         <tr><td>K</td><td>Codex: creatures, terrains, structures, relics, gods</td></tr>
         <tr><td>O</td><td>Options (art style, graphics quality)</td></tr>
         <tr><td>Enter</td><td>Chat (/p for party)</td></tr><tr><td>H</td><td>This manual</td></tr></table>
@@ -647,13 +705,16 @@ export class UI {
   renderPalette() {
     const pal = $('palette');
     pal.innerHTML = '';
-    BLOCK_IDS.forEach((id, i) => {
+    const here = this.S.you?.mode === 'space' ? 'space' : 'surface';
+    const list = BLOCK_IDS.filter((id) => blockAllowed(id, here));
+    if (!list.includes(this.S.block)) this.S.block = list[0];
+    list.forEach((id, i) => {
       const def = BLOCKS[id];
       const el = document.createElement('div');
       el.className = id === this.S.block ? 'sel' : '';
       el.style.opacity = canAfford(this.S.you.cargo, def.cost) ? 1 : 0.45;
       const cost = Object.entries(def.cost).map(([k, v]) => `${v} ${ORES[k].name}`).join(', ');
-      el.innerHTML = `<i style="background:${def.color}"></i>${i + 1}. ${def.name}<div class="dim">${cost}</div>`;
+      el.innerHTML = `<i style="background:${def.color}"></i>${i < 10 ? `${(i + 1) % 10}. ` : ''}${def.name}<div class="dim">${cost}</div>`;
       el.onclick = () => { this.S.block = id; this.renderPalette(); };
       pal.appendChild(el);
     });
@@ -669,7 +730,8 @@ export class UI {
       const sec = generateSector(sx, sz, S.seed);
       where = `<div class="big">${esc(sec.name)}</div><div class="dim">${esc(sec.region.name)}</div><div>Sector ${sx}, ${sz} · ${sec.star ? sec.star.type : 'deep space'}</div>`;
       const terr = TERRITORY[territoryOf(sx, sz, S.seed)];
-      sub = `<div><span style="color:${terr.color}">${terr.name}</span>${isSafe(sx, sz) ? ' <span class="good">(safe)</span>' : ''} · Speed ${Math.round(Math.hypot(me.vx, me.vy, me.vz))}</div>` +
+      const hole = sec.star?.type === 'Black hole' ? Math.hypot(sec.star.x - me.x, sec.star.z - me.z) / sec.star.r : 99;
+      sub = (hole < 12 ? `<div style="color:#ff7a6a">${hole < 3.2 ? 'INSIDE THE ACCRETION DISK' : 'Black hole gravity well'}</div>` : '') + `<div><span style="color:${terr.color}">${terr.name}</span>${isSafe(sx, sz) ? ' <span class="good">(safe)</span>' : ''} · Speed ${Math.round(Math.hypot(me.vx, me.vy, me.vz))}</div>` +
         `<div class="dim">Jump ${ctx.jumpLeft ? 'charging ' + Math.ceil(ctx.jumpLeft / 1000) + 's' : 'ready'} · range ${you.stats.jumpRange}</div>`;
     } else if (you.mode === 'dungeon' && ctx.dungeon) {
       const dg = ctx.dungeon;
@@ -683,7 +745,7 @@ export class UI {
       const t = Date.now() / 1000 + (S.timeOffset || 0) / 1000, sun = sunAt(p, t), wx = weatherInfo(weatherAt(p, t));
       const hh = Math.floor(sun.hour), mm = Math.floor((sun.hour % 1) * 60);
       const town = townsOf(p).find((x) => Math.hypot(x.x - me.x, x.z - me.z) < x.radius + 15);
-      sub += `<div class="dim">${CLIMATES[climateOf(p)].name} · ${wx.name}${wx.exposure ? ' <span style="color:#ff9a7a">(exposure)</span>' : ''} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${sun.night ? ' night' : ''}</div>`;
+      sub += `<div class="dim">${CLIMATES[climateOf(p)].name} · ${gravityOf(p)}g · ${wx.name}${wx.exposure ? ' <span style="color:#ff9a7a">(exposure)</span>' : ''} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${sun.night ? ' night' : ''}</div>`;
       if (town) sub += `<div style="color:#f0d8a0">${esc(town.name)} <span class="dim">(R: realms)</span></div>`;
     }
     const bless = you.blessing && you.blessing.until > Date.now() ? `<div style="color:#ffe08a">${esc(you.blessing.name)} · ${Math.ceil((you.blessing.until - Date.now()) / 60000)}m</div>` : '';

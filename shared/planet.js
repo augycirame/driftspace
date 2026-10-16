@@ -287,3 +287,9 @@ export function floraFor(planet, tx, tz) {
 }
 
 export const skyColor = (planet) => profileOf(planet).sky;
+
+// Surface gravity, as a multiple of standard: small worlds let you leap, big ones hold you down.
+export function gravityOf(planet) {
+  if (planet.starter || planet.holy) return 1;
+  return Math.round((0.55 + ((planet.seed >>> 5) % 95) / 100) * 100) / 100;
+}

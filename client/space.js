@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { generateSector, sectorOf, sectorKey, planetPos, effectiveOre, FAR_REACH } from '/shared/universe.js';
-import { ORES, BLOCKS, WORLD_GRID, DOCK_RANGE, LAND_MARGIN, stepShip } from '/shared/rules.js';
+import { ORES, BLOCKS, WORLD_GRID, DOCK_RANGE, LAND_MARGIN, stepShip, gravityAt, DOCK_PORT_RANGE } from '/shared/rules.js';
 import { mulberry32, fbm } from '/shared/rng.js';
 import { buildShip, buildNpc, buildStation, glowSprite, label, healthBar, setHealth, setThrust } from './meshes.js';
 import { FX } from './fx.js';
@@ -365,6 +365,21 @@ export class SpaceView {
     q.multiply(tmpQ.setFromEuler(new THREE.Euler(pitch, yaw, roll * st.turnRate * dt * 0.8, 'YXZ'))).normalize();
     me.q = [q.x, q.y, q.z, q.w];
     stepShip(me, input, st, dt);
+    // Gravity from this system's star (or black hole).
+    const star = this.currentStar();
+    if (star) {
+      const [gx, gy, gz] = gravityAt(star, me.x, me.y, me.z);
+      me.vx += gx * dt; me.vy += gy * dt; me.vz += gz * dt;
+    }
+  }
+
+  currentStar() {
+    const me = this.S.me;
+    for (const rec of this.sectors.values()) {
+      const st = rec.s.star;
+      if (st && Math.hypot(st.x - me.x, st.z - me.z) < st.r * 30) return st;
+    }
+    return null;
   }
 
   // ---- per-frame ------------------------------------------------------------------------------
@@ -554,6 +569,14 @@ export class SpaceView {
     for (const rec of this.sectors.values()) {
       const st = rec.s.station;
       if (st && Math.hypot(st.x - me.x, st.y - me.y, st.z - me.z) <= DOCK_RANGE) return st;
+    }
+    // Docking ports on player-built stations.
+    for (const d of this.S.deltas.values()) {
+      for (const [cell, blk] of Object.entries(d.blocks || {})) {
+        if (blk.b !== 'dock') continue;
+        const [x, y, z] = cell.split(',').map((v) => (Number(v) + 0.5) * WORLD_GRID);
+        if (Math.hypot(x - me.x, y - me.y, z - me.z) <= DOCK_PORT_RANGE) return { name: `${blk.o}'s station`, x, y, z, player: true };
+      }
     }
     return null;
   }
