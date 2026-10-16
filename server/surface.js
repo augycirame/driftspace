@@ -12,6 +12,7 @@ import { CREATURES } from '../shared/content/creatures.js';
 import { STRUCTURES } from '../shared/content/structures.js';
 import { GODS, PRAYER } from '../shared/content/factions.js';
 import { RELICS } from '../shared/content/relics.js';
+import { ALIEN_RACES, alienFolk, alienWarrior } from '../shared/content/aliens.js';
 
 const GUARD_RESPAWN_MS = 5 * 60 * 1000;
 // Reputation change for killing a faction's soldier.
@@ -75,6 +76,7 @@ export class Surfaces {
     this.w.discover(conn, [
       `terrain:${terrainOf(planet)}`, ...faunaOf(planet).map((c) => `creature:${c}`),
       ...inst.structures.map((st) => `structure:${st.type}`), ...(planet.holy ? ['place:capital'] : []),
+      ...inst.structures.filter((st) => st.race).map((st) => `race:${st.race}`),
     ]);
   }
 
@@ -342,6 +344,8 @@ export class Surfaces {
     const def = STRUCTURES[st.type];
     this.w.discover(conn, [`structure:${st.type}`]);
     if (def.kind === 'shrine') return this.pray(conn, st);
+    if (def.kind === 'village') return this.visitVillage(conn, inst, st);
+    if (def.kind === 'dungeon') return this.w.dungeons.enter(conn, inst.planet, st);
     if (st.type === 'cathedral') {
       return conn.send({ t: 'toast', msg: 'The Cathedral doors are open to the faithful. Dock at the Sanctum above to receive the Benediction.' });
     }
@@ -365,6 +369,17 @@ export class Surfaces {
     conn.send({ t: 'looted', planet: inst.planet.id, id: st.id });
     this.w.dirty = true;
     this.w.sendSelf(conn);
+  }
+
+  // Friendly and neutral aliens trade; hostile ones attack anyone who walks in.
+  visitVillage(conn, inst, st) {
+    const race = ALIEN_RACES[st.race];
+    this.w.discover(conn, [`race:${st.race}`]);
+    if (race.disposition === 'hostile' || !race.trader) {
+      for (const c of inst.creatures.values()) if (c.guard === st.id) c.aggro = conn.player.key;
+      return conn.send({ t: 'toast', msg: `The ${race.name} will not trade with you.` });
+    }
+    this.w.openShop(conn, `alien:${st.race}`, inst.planet.richness + 2, `${race.trader} · ${race.name} village`, { planet: inst.planet.id, x: st.x, z: st.z });
   }
 
   pray(conn, st) {
@@ -428,16 +443,18 @@ export class Surfaces {
     // Ruin guardians and faction soldiers turn out when someone comes near their structure.
     for (const st of inst.structures) {
       const def = STRUCTURES[st.type];
-      const guard = def.guardians || def.soldiers;
-      if (!guard) continue;
+      // Alien villages turn out their villagers and warriors.
+      const groups = st.race ? [[alienFolk(st.race), def.residents], [alienWarrior(st.race), def.warriors]] : [def.guardians || def.soldiers].filter(Boolean);
+      if (!groups.length) continue;
       if (now - (inst.guardsAt[st.id] || 0) < GUARD_RESPAWN_MS) continue;
       if (!conns.some((c) => Math.hypot(c.player.px - st.x, c.player.pz - st.z) < st.radius + 70)) continue;
       inst.guardsAt[st.id] = now;
-      const [species, count] = guard;
-      for (let i = 0; i < count; i++) {
-        const a = (i / count) * Math.PI * 2 + Math.random();
-        const x = st.x + Math.cos(a) * (st.radius + 4), z = st.z + Math.sin(a) * (st.radius + 4);
-        this.newCreature(inst, species, x, z, { guard: st.id, home: [st.x, st.z], leash: st.radius + 45 });
+      for (const [species, count] of groups) {
+        for (let i = 0; i < count; i++) {
+          const a = (i / count) * Math.PI * 2 + Math.random();
+          const x = st.x + Math.cos(a) * (st.radius + 4), z = st.z + Math.sin(a) * (st.radius + 4);
+          this.newCreature(inst, species, x, z, { guard: st.id, home: [st.x, st.z], leash: st.radius + 45 });
+        }
       }
     }
 

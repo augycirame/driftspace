@@ -16,6 +16,7 @@ import {
 import { makeItem, makeRelic, itemName, itemValue, shopStock, buffsOf, RELIC_SLOTS } from '../shared/items.js';
 import { FACTIONS, HOLY_CAPITAL, HOSTILE_REP, factionTitle } from '../shared/content/factions.js';
 import { RELICS } from '../shared/content/relics.js';
+import { STRUCTURES } from '../shared/content/structures.js';
 import { TUTORIAL } from '../shared/tutorial.js';
 import { goalTarget } from '../shared/story.js';
 import { Accounts } from './accounts.js';
@@ -23,6 +24,7 @@ import { Parties } from './party.js';
 import { Combat } from './combat.js';
 import { Surfaces } from './surface.js';
 import { StoryDirector } from './story.js';
+import { Dungeons } from './dungeon.js';
 
 const TICK_MS = 100;
 const SAVE_MS = 15000;
@@ -43,6 +45,7 @@ export class World {
     this.story = new StoryDirector(this);
     this.combat = new Combat(this);
     this.surfaces = new Surfaces(this);
+    this.dungeons = new Dungeons(this);
   }
 
   // ---- persistence ------------------------------------------------------------------------
@@ -102,6 +105,7 @@ export class World {
   disconnect(conn) {
     if (!this.connSet.delete(conn)) return;
     if (conn.player) {
+      this.dungeons.dropped(conn);
       this.storePlayer(conn.player);
       this.parties.dropped(conn.player.key);
       this.broadcast({ t: 'chat', from: null, text: `${conn.player.name} went dark.` });
@@ -314,12 +318,12 @@ export class World {
     Object.assign(p, { x: m.x, y: m.y, z: m.z, vx: m.vx * k, vy: m.vy * k, vz: m.vz * k, q: qNormalize(m.q), thrust: !!m.thrust, lastPos: now });
   }
 
-  on_walk(conn, m) { this.surfaces.walk(conn, m); }
-  on_shoot(conn, m) { this.surfaces.shoot(conn, m); }
+  on_walk(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.walk(conn, m) : this.surfaces.walk(conn, m); }
+  on_shoot(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.shoot(conn, m) : this.surfaces.shoot(conn, m); }
   on_dig(conn, m) { this.surfaces.dig(conn, m); }
   on_sbuild(conn, m) { this.surfaces.build(conn, m); }
   on_sunbuild(conn, m) { this.surfaces.unbuild(conn, m); }
-  on_interact(conn, m) { this.surfaces.interact(conn, m); }
+  on_interact(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.interact(conn, m) : this.surfaces.interact(conn, m); }
   on_land(conn, { planet }) { if (typeof planet === 'string') this.surfaces.land(conn, planet); }
   on_fire(conn) { this.combat.fire(conn); }
 
@@ -523,9 +527,9 @@ export class World {
     conn.send({ t: 'toast', msg: 'Ship rebuilt.' });
   }
 
-  openShop(conn, id, richness, name) {
+  openShop(conn, id, richness, name, surface = null) {
     const day = Math.floor(Date.now() / 86400000);
-    conn.shop = { id, richness, day };
+    conn.shop = { id, richness, day, surface };
     conn.send({ t: 'shop', id, name, stock: shopStock(id, richness, day) });
   }
 
@@ -538,6 +542,8 @@ export class World {
     const p = conn.player;
     if (!conn.shop) return false;
     if (conn.shop.id === 'haven-landing') return p.mode === 'surface' && p.planet === STARTER_PLANET_ID;
+    const sf = conn.shop.surface;
+    if (sf) return p.mode === 'surface' && p.planet === sf.planet && Math.hypot(p.px - sf.x, p.pz - sf.z) < 40;
     return this.dockedStation(p)?.id === conn.shop.id;
   }
 
@@ -623,7 +629,7 @@ export class World {
     const s = generateSector(sx, sz, this.seed);
     if (s.station) return [s.station.x + 300, s.station.y + 60, s.station.z];
     if (s.star) return [s.star.x + s.star.r + 800, 0, s.star.z];
-    return [(sx + 0.5) * SECTOR_SIZE, 0, (sz + 0.5) * SECTOR_SIZE];
+    return [(sx + 0.5) * SECTOR_SIZE, s.oy, (sz + 0.5) * SECTOR_SIZE];
   }
 
   teleport(conn, x, y, z) {
@@ -766,12 +772,20 @@ export class World {
         if (!RELICS[id]) return reply(`Usage: /relic <${Object.keys(RELICS).join('|')}>`);
         return this.giveItem(conn, makeRelic(id));
       }
+      case 'goto': {
+        if (p.mode !== 'surface') return reply('Usage (on a planet): /goto <structure type or id>');
+        const st = this.surfaces.instance(p.planet).structures.find((x) => x.id === args[0] || x.type === args[0] || (args[0] === 'dungeon' && STRUCTURES[x.type].kind === 'dungeon') || (args[0] === 'village' && x.race));
+        if (!st) return reply(`Here: ${this.surfaces.instance(p.planet).structures.map((x) => x.type).join(', ') || 'nothing'}`);
+        p.px = st.x + st.radius + 3; p.pz = st.z; p.py = this.surfaces.ground(p.planet, p.px, p.pz);
+        conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
+        return reply(`Moved to the ${STRUCTURES[st.type].name}.`);
+      }
       case 'heal':
         p.hull = p.stats.hp; p.shield = p.stats.shield; p.hp = p.maxHp;
         this.sendSelf(conn);
         return reply('Healed.');
       default:
-        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /heal');
+        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /heal');
     }
   }
 
@@ -823,6 +837,7 @@ export class World {
     this.mineTick(dt, now);
     this.combat.tick(dt, now);
     this.surfaces.tick(dt, now);
+    this.dungeons.tick(dt, now);
     this.story.tick(now);
     this.snapshots(now);
   }
@@ -878,6 +893,8 @@ export class World {
           players.push({ id: o.id, key: p.key, name: p.name, color: p.color, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, q: p.q, thrust: p.thrust, mining: p.mining, hull: p.hull, maxHull: p.stats.hp, rev: p.shipRev });
         }
         c.send({ t: 'snap', time: now, mode: 'space', players, npcs: this.combat.npcsIn(c.subs, me), ships, online, mining: me.mining });
+      } else if (me.mode === 'dungeon') {
+        c.send({ t: 'snap', time: now, mode: 'dungeon', ...this.dungeons.snapshot(c), parked: [], ships, online });
       } else {
         const s = this.surfaces.snapshot(c);
         for (const pk of s.parked) { const oc = this.connByName(pk.key); if (oc) needShip(oc.player); }

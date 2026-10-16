@@ -4,6 +4,7 @@
 
 import { rngFor, range, pick, weightedPick, fbm, hash2, mulberry32 } from './rng.js';
 import { FACTIONS, HOLY_CAPITAL } from './content/factions.js';
+import { ALIEN_IDS } from './content/aliens.js';
 
 export const SECTOR_SIZE = 5000;
 export const SAFE_RADIUS = 2;            // sectors around Haven where PvP is off
@@ -86,6 +87,15 @@ export function territoryOf(sx, sz, seed) {
   return 'wilds';
 }
 
+// Alien races claim clusters of systems out in the wilds, away from human space.
+export function alienRaceOf(sx, sz, seed) {
+  if (territoryOf(sx, sz, seed) !== 'wilds' || Math.hypot(sx, sz) < 4) return null;
+  const r = rngFor(Math.floor(sx / 6), Math.floor(sz / 6), seed, 555);
+  if (r() > 0.5) return null;
+  const race = ALIEN_IDS[Math.floor(r() * ALIEN_IDS.length)];
+  return rngFor(sx, sz, seed, 556)() < 0.75 ? race : null;
+}
+
 export const factionOfTerritory = (t) => (t === 'empire' || t === 'capital' ? 'empire' : t === 'rebellion' ? 'rebellion' : null);
 
 const cache = new Map();
@@ -107,7 +117,7 @@ export function generateSector(sx, sz, seed) {
 
   const sector = {
     sx, sz, key: sectorKey(sx, sz), region, home, safe: isSafe(sx, sz), territory, capital,
-    faction: factionOfTerritory(territory),
+    faction: factionOfTerritory(territory), alien: alienRaceOf(sx, sz, seed),
     name: home ? 'Haven' : capital ? 'Aurelian Throne' : makeName(rng),
     star: null, planets: [], asteroids: [], station: null, wormhole: null, nebulae: [],
   };
@@ -132,7 +142,7 @@ export function generateSector(sx, sz, seed) {
         landable: PLANET_TYPES[ptype].land,
         starter: home && i === 0,
         holy: capital && i === 0,
-        territory,
+        territory, alien: sector.alien,
         seed: hash2(sx * 31 + i, sz, seed),
         richness: region.richness,
       });
@@ -199,14 +209,27 @@ export function generateSector(sx, sz, seed) {
     });
   }
 
+  // Real depth: each star system sits at its own height above or below the galactic plane,
+  // and every planet's orbit is tilted. (A separate random stream keeps everything else stable.)
+  const vr = rngFor(sx, sz, seed, 7);
+  sector.oy = home ? 0 : range(vr, -1800, 1800);
+  if (sector.star) sector.star.y += sector.oy;
+  for (const a of sector.asteroids) a.y += sector.oy;
+  if (sector.station) sector.station.y += sector.oy;
+  if (sector.wormhole) sector.wormhole.y += sector.oy;
+  for (const n of sector.nebulae) n.y += sector.oy;
+  for (const pl of sector.planets) pl.incl = home ? range(vr, -0.06, 0.06) : range(vr, -0.5, 0.5);
+
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
   cache.set(key, sector);
   return sector;
 }
 
+// Where a planet is on its (tilted) orbit at a given time.
 export function planetPos(p, star, tSeconds) {
   const ang = p.phase + (tSeconds / p.period) * Math.PI * 2;
-  return [star.x + Math.cos(ang) * p.orbit, 0, star.z + Math.sin(ang) * p.orbit];
+  const i = p.incl || 0;
+  return [star.x + Math.cos(ang) * p.orbit, star.y - Math.sin(ang) * p.orbit * Math.sin(i), star.z + Math.sin(ang) * p.orbit * Math.cos(i)];
 }
 
 function parseId(id, tag) {

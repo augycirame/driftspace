@@ -6,6 +6,7 @@ import { TERRAINS, TERRAIN_IDS } from './content/terrains.js';
 import { CREATURES, CREATURE_IDS } from './content/creatures.js';
 import { STRUCTURES, STRUCTURE_IDS } from './content/structures.js';
 import { GODS, GOD_IDS } from './content/factions.js';
+import { ALIEN_RACES } from './content/aliens.js';
 
 export const SURFACE_HALF = 400;   // surface spans [-400, 400] on x and z
 export const CELL = 4;             // terrain vertex spacing
@@ -95,6 +96,7 @@ export function structuresOf(planet) {
   const place = (type, x, z) => {
     const st = STRUCTURES[type];
     const inst = { id: `s${list.length}`, type, x, z, rot: rng() * Math.PI * 2, radius: st.radius };
+    if (st.kind === 'village') inst.race = race;
     if (st.kind === 'shrine') {
       const gods = GOD_IDS.filter((g) => GODS[g].tags.some((t) => tags.includes(t)));
       inst.god = (gods.length ? gods : GOD_IDS)[Math.floor(rng() * (gods.length || GOD_IDS.length))];
@@ -106,22 +108,26 @@ export function structuresOf(planet) {
   if (planet.holy) {
     list.push({ id: 's0', type: 'cathedral', x: 0, z: -110, rot: 0, radius: STRUCTURES.cathedral.radius });
   }
-  // Ruins and shrines are special: only some worlds have them (ancient terrains more often).
+  // Ruins, shrines and dungeons are special: only some worlds have them.
   const ancient = tags.includes('ancient');
   const hasRuins = rng() < (ancient ? 0.85 : 0.22);
   const hasShrine = rng() < (ancient ? 0.5 : 0.3);
+  const hasDungeon = rng() < (ancient ? 0.6 : 0.28);
+  // An alien race that claims this system settles worlds it likes (and some it doesn't).
+  const race = planet.alien && (ALIEN_RACES[planet.alien].tags.some((t) => tags.includes(t)) || rng() < 0.35) ? planet.alien : null;
   const pool = STRUCTURE_IDS.filter((id) => {
     const st = STRUCTURES[id];
     if (!st.rarity || !tagsMatch(st.tags, tags)) return false;
     if (st.kind === 'ruin' && !hasRuins) return false;
     if (st.kind === 'shrine' && !hasShrine) return false;
+    if (st.kind === 'dungeon' && !hasDungeon) return false;
     if (st.territory === 'capital') return planet.territory === 'capital';
     if (st.territory === 'empire') return planet.territory === 'empire' || planet.territory === 'capital';
     if (st.territory === 'rebellion') return planet.territory === 'rebellion';
     if (st.kind === 'shrine' && planet.holy) return false;   // no heresy on Aurelis
     return true;
   });
-  const forced = planet.holy ? ['pilgrimCamp', 'pilgrimCamp', 'inquisitionSpire', 'imperialGarrison'] : [];
+  const forced = planet.holy ? ['pilgrimCamp', 'pilgrimCamp', 'inquisitionSpire', 'imperialGarrison'] : race ? ['alienVillage'] : [];
   const n = forced.length + (planet.holy ? 2 : 1 + Math.floor(rng() * 3));
   for (let i = 0; i < n && pool.length; i++) {
     const type = forced[i] || pickWeighted(rng, pool.map((id) => [id, STRUCTURES[id].rarity]));

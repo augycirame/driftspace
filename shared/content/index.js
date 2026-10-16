@@ -5,3 +5,5 @@ export * from './creatures.js';
 export * from './structures.js';
 export * from './relics.js';
 export * from './factions.js';
+export * from './aliens.js';
+export * from './dungeons.js';

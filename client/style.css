@@ -9,7 +9,7 @@ canvas#game { display: block; width: 100vw; height: 100vh; }
   background: rgba(2, 3, 8, 0.6); z-index: 10; padding: 16px; }
 .card { background: rgba(10, 14, 26, 0.95); border: 1px solid #2a3654; border-radius: 10px;
   padding: 22px 26px; width: 100%; max-width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,.6); max-height: 90vh; overflow: auto; }
-.card.wide { max-width: 640px; }
+.card.wide { max-width: 720px; }
 h1 { margin: 0 0 4px; letter-spacing: .3em; font-size: 26px; color: #9fd0ff; }
 h2 { margin: 0 0 12px; color: #9fd0ff; font-size: 18px; }
 h3 { margin: 14px 0 6px; color: #b8c8e0; font-size: 14px; }
@@ -99,7 +99,7 @@ button.x { width: auto; margin: 0; padding: 4px 10px; background: transparent; c
 .goal .bar { height: 8px; background: #1a2238; border-radius: 4px; overflow: hidden; margin-top: 3px; }
 .goal .bar span { display: block; height: 100%; background: linear-gradient(90deg, #7a4aff, #c27bff); }
 .goal.locked { opacity: .45; }
-.tabs { display: flex; gap: 6px; margin: 10px 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .tabs button { width: auto; margin: 0; padding: 5px 10px; background: #1c2640; }
 .tabs button.sel { background: #2f6fe0; }
 .dialogue p { font-size: 15px; line-height: 1.6; }

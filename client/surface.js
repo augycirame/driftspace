@@ -12,6 +12,8 @@ import { buildShip, buildPerson, buildCreature, buildStructure, label, healthBar
 import { CREATURES } from '/shared/content/creatures.js';
 import { STRUCTURES } from '/shared/content/structures.js';
 import { GODS } from '/shared/content/factions.js';
+import { ALIEN_RACES } from '/shared/content/aliens.js';
+import { DUNGEON_THEMES } from '/shared/content/dungeons.js';
 import { FX } from './fx.js';
 
 const HALF_V = (VERTS - 1) / 2;
@@ -216,11 +218,14 @@ export class SurfaceView {
     for (const st of structuresOf(this.planet)) {
       const def = STRUCTURES[st.type];
       const god = st.god ? GODS[st.god] : null;
-      const mesh = buildStructure(def, god?.color);
+      const race = st.race ? ALIEN_RACES[st.race] : null;
+      const mesh = buildStructure(def, god?.color, race);
       mesh.position.set(st.x, structureBase(this.planet, st), st.z);
       mesh.rotation.y = st.rot;
       const top = Math.max(...def.parts.map((p) => p[2] + (p[0] === 'box' || p[0] === 'cyl' || p[0] === 'cone' ? (p[5] || 0) / 2 : p[4] || 0)));
-      const lb = label(god ? `${def.name}: ${god.name.split(',')[0]}` : def.name, god ? god.color : def.kind === 'imperial' || def.kind === 'holy' ? '#ffe08a' : def.kind === 'rebel' ? '#ff9a7a' : '#d9c8ff', 0.85);
+      const title = god ? `${def.name}: ${god.name.split(',')[0]}` : race ? `${race.name} village` : def.kind === 'dungeon' ? `${def.name} · ${DUNGEON_THEMES[def.dungeon].name}` : def.name;
+      const color = god ? god.color : race ? race.color : def.kind === 'dungeon' ? DUNGEON_THEMES[def.dungeon].light : def.kind === 'imperial' || def.kind === 'holy' ? '#ffe08a' : def.kind === 'rebel' ? '#ff9a7a' : '#d9c8ff';
+      const lb = label(title, color, 0.85);
       lb.position.y = top + 4;
       mesh.add(lb);
       this.root.add(mesh);
@@ -439,13 +444,13 @@ export class SurfaceView {
       let v = this.creatures.get(c.id);
       if (!v) {
         const def = CREATURES[c.sp] || CREATURES.rockCrawler;
-        const group = buildCreature(def.color, c.size, c.id.length * 31 + c.id.charCodeAt(1), def.shape);
-        const tall = def.shape === 'golem' ? 3 : def.shape === 'flyer' ? 2.5 : 2;
+        const group = buildCreature(def.color, c.size, c.id.length * 31 + c.id.charCodeAt(1), def.shape, def);
+        const tall = def.shape === 'strider' ? 4.6 : def.shape === 'golem' ? 3 : def.shape === 'flyer' || def.shape === 'tentacled' ? 2.6 : 2;
         const bar = healthBar(0.035);
         bar.position.y = c.size * tall + 0.6;
         group.add(bar);
-        if (def.faction || def.behavior === 'guardian') {
-          const lb = label(def.name, def.faction === 'empire' ? '#ffe08a' : def.faction === 'rebellion' ? '#ff9a7a' : '#d9a8ff', 0.7);
+        if (def.faction || def.behavior === 'guardian' || def.race) {
+          const lb = label(def.name, def.faction === 'empire' ? '#ffe08a' : def.faction === 'rebellion' ? '#ff9a7a' : def.race ? ALIEN_RACES[def.race].color : '#d9a8ff', 0.7);
           lb.position.y = c.size * tall + 1.2;
           group.add(lb);
         }
@@ -461,6 +466,7 @@ export class SurfaceView {
       if (ud.flap) ud.legs.forEach((l, i) => { l.rotation.z = Math.sin(t * 10 + v.phase) * 0.6 * (i ? 1 : -1); });
       else if (ud.wiggle) ud.legs.forEach((l, i) => { l.position.x = Math.sin(t * 5 + v.phase + i * 0.9) * 0.3 * c.size; });
       else if (ud.pulse) ud.legs.forEach((l) => { l.scale.y = c.size * 0.8 * (1 + Math.sin(t * 4 + v.phase) * 0.12); });
+      else if (ud.sway) ud.legs.forEach((l, i) => { l.rotation.y = Math.sin(t * 2 + v.phase + i) * 0.5; });
       else ud.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 8 + v.phase + i * Math.PI) * 0.5; });
     }
     for (const [id, v] of this.creatures) if (!seen.has(id)) { this.root.remove(v.group); this.creatures.delete(id); }
@@ -555,6 +561,11 @@ export class SurfaceView {
     for (const { st, def } of this.structures || []) {
       if (!near(st.x, st.z, st.radius + 6)) continue;
       if (def.kind === 'shrine') return { what: 'structure', id: st.id, text: `E: pray to ${GODS[st.god].name}` };
+      if (def.kind === 'dungeon') return { what: 'structure', id: st.id, text: `E: descend into the ${DUNGEON_THEMES[def.dungeon].name}` };
+      if (def.kind === 'village') {
+        const race = ALIEN_RACES[st.race];
+        return { what: 'structure', id: st.id, text: race.trader && race.disposition !== 'hostile' ? `E: trade with the ${race.trader}` : `The ${race.name} watch you. They don't trade.` };
+      }
       if (st.type === 'cathedral') return { what: 'structure', id: st.id, text: 'E: enter the Cathedral of the Radiant Throne' };
       if (!def.cache) return { what: 'structure', id: st.id, text: `E: examine the ${def.name}` };
       if (this.looted.has(st.id)) return { what: 'structure', id: st.id, text: `${def.name} (already searched)` };

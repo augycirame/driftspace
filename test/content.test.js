@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TERRAINS, CREATURES, STRUCTURES, RELICS, GODS, FACTIONS } from '../shared/content/index.js';
+import { TERRAINS, CREATURES, STRUCTURES, RELICS, GODS, FACTIONS, DUNGEON_THEMES, ALIEN_RACES } from '../shared/content/index.js';
 import { ORES } from '../shared/rules.js';
 import { generateSector, findPlanet, holyCapitalSector, territoryOf } from '../shared/universe.js';
 import { terrainOf, faunaOf, structuresOf, baseHeight, structureBase } from '../shared/planet.js';
 import { buffsOf, makeRelic } from '../shared/items.js';
 
 const FLORA = ['tree', 'palm', 'rock', 'spike', 'cactus', 'mushroom', 'crystal', 'bone', 'reed', 'deadtree', 'coral'];
-const SHAPES = ['quad', 'serpent', 'flyer', 'blob', 'insect', 'biped', 'golem'];
+const SHAPES = ['quad', 'serpent', 'flyer', 'blob', 'insect', 'biped', 'golem', 'crab', 'tentacled', 'strider', 'alien'];
 
 test('the content library is internally consistent', () => {
   const terrainTags = new Set(Object.values(TERRAINS).flatMap((t) => t.tags));
@@ -17,7 +17,8 @@ test('the content library is internally consistent', () => {
   }
   for (const [id, c] of Object.entries(CREATURES)) {
     assert.ok(SHAPES.includes(c.shape), `${id} shape`);
-    if (!['guardian', 'soldier'].includes(c.behavior) && id !== 'glowmoth') assert.ok(c.tags.some((t) => terrainTags.has(t)), `${id} has a habitat`);
+    const special = ['guardian', 'soldier'].includes(c.behavior) || ['dungeon', 'boss', 'alien'].some((t) => c.tags.includes(t)) || id === 'glowmoth';
+    if (!special) assert.ok(c.tags.some((t) => terrainTags.has(t)), `${id} has a habitat`);
     if (c.faction) assert.ok(FACTIONS[c.faction]);
   }
   for (const [id, s] of Object.entries(STRUCTURES)) {
@@ -26,6 +27,12 @@ test('the content library is internally consistent', () => {
     assert.ok(s.parts.length > 0);
   }
   for (const [id, g] of Object.entries(GODS)) assert.equal(RELICS[g.relic].god, id);
+  for (const [id, d] of Object.entries(DUNGEON_THEMES)) {
+    assert.equal(STRUCTURES[d.entrance].dungeon, id);
+    for (const c of [...d.enemies, d.boss]) assert.ok(CREATURES[c], `${id} creature ${c}`);
+    for (const r of d.relics) assert.ok(RELICS[r], `${id} relic ${r}`);
+  }
+  for (const id of Object.keys(ALIEN_RACES)) assert.ok(CREATURES[`alien_${id}`] && CREATURES[`folk_${id}`]);
 });
 
 test('planets draw terrain, wildlife and structures from the library', () => {

@@ -39,7 +39,8 @@ off, mine an asteroid, and dock at Haven Station.
 **Accounts.** Real accounts with a name and password. Passwords are hashed with scrypt, and
 only hashes of session tokens are stored. Your browser stays signed in.
 
-**Fly in 3D.** Steer with the mouse. Move with W/S and A/D, rise and sink with Space/C, roll
+**Fly in 3D.** Space is fully three-dimensional: star systems sit at different heights above and
+below the galactic plane, and planet orbits are tilted. Steer with the mouse. Move with W/S and A/D, rise and sink with Space/C, roll
 with Q/E. The galaxy is endless. Every sector can hold a star (red dwarfs to black holes),
 orbiting planets, asteroid belts, stations and wormholes. Jump between sectors from the
 galaxy map (M).
@@ -85,8 +86,10 @@ so **adding an entry adds it to the galaxy**. No other code changes are needed.
 | File | What's in it |
 |---|---|
 | `terrains.js` | 20 terrains (canyonlands, crystal tundra, fungal forests, toxic swamps, bone wastes, glass deserts…): hills, colors, liquids, ores, flora, and biome tags. Each planet picks one that suits its type. |
-| `creatures.js` | 26 creatures with body plans (quad, serpent, flyer, blob, insect, biped, golem) and behaviors (aggressive, territorial, passive, swarm, plus ruin guardians and faction soldiers). Each planet gets up to three species that match its terrain. |
-| `structures.js` | 16 structures built from simple shapes: Precursor obelisks, monolith rings, sunken ziggurats, fallen colossi, vaults, shrines and temples, Imperial garrisons, Inquisition spires, rebel hideouts, wrecks, pilgrim camps and the Cathedral. Some have loot caches, guardians or soldiers. |
+| `creatures.js` | 58 creatures (plus each alien race's warriors and villagers) with body plans (quad, serpent, flyer, blob, insect, biped, golem, crab, tentacled, strider) and behaviors (aggressive, territorial, passive, swarm, plus ruin guardians and faction soldiers). Each planet gets up to three species that match its terrain. Dungeon dwellers and five bosses live only underground. |
+| `aliens.js` | Six alien races (Vashti, Krell, Myrmidar, Lumen, Thralls of Ix, Ostrakar), each friendly, neutral or hostile, with their own look, ships and villages. |
+| `dungeons.js` | Five dungeon themes (Sunken Crypt, Hive Warren, The Forge Below, Crystal Caverns, Drowned Temple of Ix) with their monsters, bosses and treasure. |
+| `structures.js` | 22 structures built from simple shapes: Precursor obelisks, monolith rings, sunken ziggurats, fallen colossi, vaults, shrines and temples, Imperial garrisons, Inquisition spires, rebel hideouts, wrecks, pilgrim camps and the Cathedral. Some have loot caches, guardians or soldiers. |
 | `relics.js` | 18 relics with lasting bonuses (damage, armor, speed, mining, jump range, luck, regeneration, shields). Pilots carry two. |
 | `factions.js` | The Radiant Empire, its holy capital Aurelis, the Unbound rebellion, the five ancient gods, and their blessings. |
 
@@ -115,11 +118,28 @@ In game, the **Codex (K)** shows the whole library and fills in as you discover 
   searched once per pilot, for credits, gear and relics. Ruins appear on about a third of
   star systems, more often on ancient terrains such as glass deserts and bone wastes.
 
+## Aliens
+
+Out in the wilds, beyond human space, alien races claim clusters of star systems. They build
+villages on worlds that suit them and fly their own ships. Friendly and neutral races trade
+exotic gear at their villages. Neutral races defend their homes; hostile ones (the Krell and the
+Thralls of Ix) attack on sight. Shoot at any of them and their kin turn on you.
+
+## Dungeons
+
+About one planet in six has a dungeon entrance: a crypt stairway, a hive mound, the gate of a
+forge, a crystal cave or a drowned temple. Walk up and press E to go underground. Each dungeon
+is a seeded maze of rooms and corridors, with monsters that wake up when they see you, chests,
+and a boss in the deepest room guarding a treasure vault (which usually holds a relic). Your
+party enters the same copy of the dungeon together. Difficulty grows the farther the planet is
+from Haven, and a dungeon resets a couple of minutes after everyone has left.
+
 ## Admin commands
 
 Pilots named in `ADMIN` can type these in chat: `/spawn pirate|hollow|imperial|rebel [n]`,
 `/tp <x> <z>`, `/land`, `/give <ore> [n]`, `/credits [n]`, `/story [n]` (advance the current
-goal), `/rep empire|rebellion <n>`, `/relic <id>`, `/heal`.
+goal), `/rep empire|rebellion <n>`, `/relic <id>`, `/goto <structure|dungeon|village>` (on a
+planet), `/heal`.
 
 ## How it works
 

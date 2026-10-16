@@ -7,6 +7,7 @@ import { ORES, BLOCKS, WORLD_GRID, DOCK_RANGE, LAND_MARGIN, stepShip } from '/sh
 import { mulberry32, fbm } from '/shared/rng.js';
 import { buildShip, buildNpc, buildStation, glowSprite, label, healthBar, setHealth, setThrust } from './meshes.js';
 import { FX } from './fx.js';
+import { ALIEN_RACES } from '/shared/content/aliens.js';
 
 const tmpV = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
 const blockGeo = new THREE.BoxGeometry(WORLD_GRID, WORLD_GRID, WORLD_GRID);
@@ -210,9 +211,10 @@ export class SpaceView {
         const lb = label(p.name + (p.landable ? '' : ' (gas giant)'), p.starter ? '#9fffd0' : '#b8c8e0');
         lb.position.y = p.r + 30;
         mesh.add(lb);
-        const orbit = new THREE.Mesh(new THREE.RingGeometry(p.orbit - 1.5, p.orbit + 1.5, 128), new THREE.MeshBasicMaterial({ color: '#6a8ac0', side: THREE.DoubleSide, transparent: true, opacity: 0.12 }));
-        orbit.rotation.x = -Math.PI / 2;
-        orbit.position.set(s.star.x, s.star.y, s.star.z);
+        // The orbit path, traced with the same formula the planet follows (orbits are tilted).
+        const pts = [];
+        for (let k = 0; k < 128; k++) pts.push(new THREE.Vector3(...planetPos({ ...p, phase: (k / 128) * Math.PI * 2, period: 1e12 }, s.star, 0)));
+        const orbit = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: '#6a8ac0', transparent: true, opacity: 0.22 }));
         group.add(orbit);
         rec.planets.push({ p, mesh });
       }
@@ -465,12 +467,13 @@ export class SpaceView {
       seen.add(n.id);
       let v = this.npcs.get(n.id);
       if (!v) {
-        const group = buildNpc(n.kind);
+        const race = n.race ? ALIEN_RACES[n.race] : null;
+        const group = buildNpc(n.kind, race);
         const bar = healthBar(n.kind === 'mothership' ? 0.2 : 0.05);
         bar.position.y = n.kind === 'mothership' ? 260 : 20;
         group.add(bar);
-        const name = { pirate: 'Pirate', hollow: 'Hollow', mothership: 'HIVE MOTHERSHIP', imperial: 'Imperial patrol', rebel: 'Rebel raider' }[n.kind];
-        const lb = label(name, { pirate: '#ff8a7a', hollow: '#b0ff6a', mothership: '#d06aff', imperial: '#ffe08a', rebel: '#ff9a7a' }[n.kind], n.kind === 'mothership' ? 1.6 : 0.9);
+        const name = race ? `${race.name} ship` : { pirate: 'Pirate', hollow: 'Hollow', mothership: 'HIVE MOTHERSHIP', imperial: 'Imperial patrol', rebel: 'Rebel raider' }[n.kind];
+        const lb = label(name, race ? race.color : { pirate: '#ff8a7a', hollow: '#b0ff6a', mothership: '#d06aff', imperial: '#ffe08a', rebel: '#ff9a7a' }[n.kind], n.kind === 'mothership' ? 1.6 : 0.9);
         lb.position.y = n.kind === 'mothership' ? 300 : 26;
         group.add(lb);
         v = { group, bar };

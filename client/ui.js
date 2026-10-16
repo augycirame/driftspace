@@ -4,7 +4,7 @@
 import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
 import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford } from '/shared/rules.js';
 import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, itemName, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
-import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle } from '/shared/content/index.js';
+import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle, ALIEN_RACES, DUNGEON_THEMES } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
 import { terrainOf as terrainOfPlanet } from '/shared/planet.js';
 
@@ -320,7 +320,7 @@ export class UI {
   discovered(keys) {
     for (const k of keys) {
       const [kind, id] = k.split(':');
-      const name = { terrain: TERRAINS, creature: CREATURES, structure: STRUCTURES, relic: RELICS, god: GODS }[kind]?.[id]?.name;
+      const name = { terrain: TERRAINS, creature: CREATURES, structure: STRUCTURES, relic: RELICS, god: GODS, race: ALIEN_RACES, dungeon: DUNGEON_THEMES }[kind]?.[id]?.name;
       if (name) this.toast(`Codex: ${name}`, 'loot');
     }
     if (this.current?.kind === 'codex') this.rerender();
@@ -330,7 +330,7 @@ export class UI {
     this.codexTab = tab;
     this.open('codex', 'Codex', (body) => {
       const known = new Set(this.S.you.codex || []);
-      const tabs = { creatures: ['Creatures', CREATURES, 'creature'], terrains: ['Terrains', TERRAINS, 'terrain'], structures: ['Structures', STRUCTURES, 'structure'], relics: ['Relics', RELICS, 'relic'], gods: ['Gods', GODS, 'god'], factions: ['Powers', null] };
+      const tabs = { creatures: ['Creatures', CREATURES, 'creature'], aliens: ['Aliens', ALIEN_RACES, 'race'], terrains: ['Terrains', TERRAINS, 'terrain'], structures: ['Structures', STRUCTURES, 'structure'], dungeons: ['Dungeons', DUNGEON_THEMES, 'dungeon'], relics: ['Relics', RELICS, 'relic'], gods: ['Gods', GODS, 'god'], factions: ['Powers', null] };
       const bar = document.createElement('div');
       bar.className = 'tabs';
       for (const [id, [label, table, prefix]] of Object.entries(tabs)) {
@@ -349,8 +349,10 @@ export class UI {
       }
       for (const [id, e] of Object.entries(table)) {
         if (prefix === 'creature' && id === 'glowmoth' && !known.has('creature:glowmoth')) continue;
+        if (prefix === 'creature' && e.race) continue;   // listed under Aliens
         if (!known.has(`${prefix}:${id}`)) {
-          const hint = prefix === 'creature' ? `Lives in: ${e.tags.join(', ')}` : prefix === 'terrain' ? 'An undiscovered kind of world' : prefix === 'relic' ? `${RELIC_RARITY[e.rarity]} relic` : prefix === 'god' ? 'Pray at one of their shrines' : 'Not yet found';
+          const hint = prefix === 'creature' ? (e.boss ? 'A dungeon boss' : e.tags.includes('dungeon') ? 'Found underground' : `Lives in: ${e.tags.join(', ')}`)
+            : prefix === 'race' ? 'An alien species of the wilds' : prefix === 'dungeon' ? 'Find its entrance on a planet' : prefix === 'terrain' ? 'An undiscovered kind of world' : prefix === 'relic' ? `${RELIC_RARITY[e.rarity]} relic` : prefix === 'god' ? 'Pray at one of their shrines' : 'Not yet found';
           body.appendChild(this.row(`<span class="dim">??? · ${hint}</span>`));
           continue;
         }
@@ -359,6 +361,8 @@ export class UI {
         if (prefix === 'terrain') html += `<br><span class="small">${esc(e.desc)}</span><br><span class="dim small">Ore: ${e.ore.map(([o]) => o).join(', ')}</span>`;
         if (prefix === 'structure') html += ` <span class="dim small">${e.kind}</span><br><span class="small">${esc(e.lore)}</span>`;
         if (prefix === 'relic') html += ` <span class="dim small">${RELIC_RARITY[e.rarity]}</span><br><span class="small">${describeBonus(e.bonus)}</span><br><span class="dim small">${esc(e.lore)}</span>`;
+        if (prefix === 'race') html += ` <span class="dim small">${e.disposition}</span><br><span class="small">${esc(e.desc)}</span><br><span class="dim small">Settles: ${e.tags.join(', ')}${e.trader ? ' · trades' : ''}</span>`;
+        if (prefix === 'dungeon') html += `<br><span class="small">${esc(e.lore)}</span><br><span class="dim small">Boss: ${esc(CREATURES[e.boss].name)} · lives in ${e.tags.join(', ')} worlds</span>`;
         if (prefix === 'god') html += ` <span class="dim small">${esc(e.domain)}</span><br><span class="small">${esc(e.lore)}</span><br><span class="dim small">Blessing: ${describeBonus(e.blessing)} · Favor ${this.S.you.favor?.[id] || 0}/5</span>`;
         body.appendChild(this.row(html));
       }
@@ -427,6 +431,10 @@ export class UI {
       const terr = TERRITORY[territoryOf(sx, sz, S.seed)];
       sub = `<div><span style="color:${terr.color}">${terr.name}</span>${isSafe(sx, sz) ? ' <span class="good">(safe)</span>' : ''} · Speed ${Math.round(Math.hypot(me.vx, me.vy, me.vz))}</div>` +
         `<div class="dim">Jump ${ctx.jumpLeft ? 'charging ' + Math.ceil(ctx.jumpLeft / 1000) + 's' : 'ready'} · range ${you.stats.jumpRange}</div>`;
+    } else if (you.mode === 'dungeon' && ctx.dungeon) {
+      const dg = ctx.dungeon;
+      where = `<div class="big">${esc(dg.name)}</div><div class="dim">Depth ${dg.depth} · underground</div>`;
+      sub = `<div>${dg.boss ? '<span class="good">The boss is dead</span>' : `<span style="color:#ff8a7a">${dg.left} monsters remain</span>`}</div>`;
     } else {
       const p = findPlanet(you.planet, S.seed);
       where = `<div class="big">${esc(p.name)}</div><div class="dim">${TERRAINS[terrainOfPlanet(p)].name}${p.starter ? ' · starter planet' : p.holy ? ' · Holy Capital' : ''}</div>`;

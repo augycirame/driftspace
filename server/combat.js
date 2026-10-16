@@ -5,6 +5,7 @@ import { generateSector, sectorOf, sectorKey, isSafe, territoryOf, SECTOR_SIZE }
 import { qRotate, forwardOf, segmentDistance, SHIP_BLOCK } from '../shared/rules.js';
 import { randomItem, makeRelic } from '../shared/items.js';
 import { eraScale } from '../shared/story.js';
+import { ALIEN_RACES } from '../shared/content/aliens.js';
 
 const BOLT_SPEED = 1500;
 const BOLT_LIFE = 1.3;
@@ -15,6 +16,7 @@ export const NPC_KINDS = {
   hollow:     { name: 'Hollow',          hp: 110, dmg: 5,  speed: 420, radius: 16, interval: 1.0, bounty: 60,  color: '#b0ff6a' },
   mothership: { name: 'Hive Mothership', hp: 6000, dmg: 16, speed: 0,  radius: 170, interval: 0.6, bounty: 6000, color: '#d06aff' },
   imperial:   { name: 'Imperial patrol', hp: 130, dmg: 5,  speed: 380, radius: 15, interval: 1.0, bounty: 70,  color: '#ffe08a', faction: 'empire', relic: 'imperialSeal' },
+  alien:      { name: 'Alien ship',      hp: 120, dmg: 5,  speed: 410, radius: 15, interval: 1.0, bounty: 70,  color: '#6ad8c8' },
   rebel:      { name: 'Rebel raider',    hp: 100, dmg: 5,  speed: 430, radius: 14, interval: 0.9, bounty: 60,  color: '#ff6a4a', faction: 'rebellion', relic: 'martyrsBadge' },
 };
 
@@ -79,7 +81,7 @@ export class Combat {
 
   // ---- NPCs ---------------------------------------------------------------------------------
 
-  spawnNpc(kind, x, y, z, richness) {
+  spawnNpc(kind, x, y, z, richness, extra = {}) {
     if (this.npcs.size >= MAX_NPCS) return null;
     const def = NPC_KINDS[kind];
     const eff = this.w.story.effects();
@@ -90,7 +92,7 @@ export class Combat {
       hp, maxHp: kind === 'mothership' ? this.w.story.mothership().maxHp : hp,
       dmg: def.dmg * k, speed: def.speed * (0.9 + Math.random() * 0.2), radius: def.radius,
       richness, lastFire: 0, lastNear: Date.now(), home: [x, y, z], wander: null, damagers: new Set(),
-      faction: def.faction || null, aggro: new Set(),
+      faction: def.faction || null, aggro: new Set(), ...extra,
     };
     this.npcs.set(npc.id, npc);
     return npc;
@@ -106,7 +108,7 @@ export class Combat {
       const [sx, sz] = sectorOf(p.x, p.z);
       const safe = isSafe(sx, sz);
       const rich = generateSector(sx, sz, this.w.seed).region.richness;
-      const near = { pirate: 0, hollow: 0, imperial: 0, rebel: 0 };
+      const near = { pirate: 0, hollow: 0, imperial: 0, rebel: 0, alien: 0 };
       for (const n of this.npcs.values()) {
         if (Math.hypot(n.x - p.x, n.z - p.z) > 6000) continue;
         if (n.kind in near) near[n.kind]++;
@@ -121,6 +123,9 @@ export class Combat {
       if (lawful && near.imperial < (territory === 'capital' ? 6 : 3) && Math.random() < 0.3) {
         this.spawnGroup('imperial', p, 1 + Math.floor(Math.random() * 3), territory === 'capital' ? rich + 4 : rich);
       }
+      // Alien ships patrol the systems their race has claimed.
+      const race = generateSector(sx, sz, this.w.seed).alien;
+      if (race && near.alien < 3 && Math.random() < 0.25) this.spawnGroup('alien', p, 1 + Math.floor(Math.random() * 3), rich, { race });
       if (territory === 'rebellion') {
         if (near.rebel < 3 && Math.random() < 0.3) this.spawnGroup('rebel', p, 1 + Math.floor(Math.random() * 3), rich);
         if (near.imperial < 2 && Math.random() < 0.15) this.spawnGroup('imperial', p, 1 + Math.floor(Math.random() * 2), rich);
@@ -134,7 +139,7 @@ export class Combat {
     const mother = [...this.npcs.values()].find((n) => n.kind === 'mothership');
     if (eff.mothership && !mother) {
       const m = this.w.story.mothership();
-      this.spawnNpc('mothership', (m.sx + 0.5) * SECTOR_SIZE, 250, (m.sz + 0.5) * SECTOR_SIZE, 1);
+      this.spawnNpc('mothership', (m.sx + 0.5) * SECTOR_SIZE, generateSector(m.sx, m.sz, this.w.seed).oy + 250, (m.sz + 0.5) * SECTOR_SIZE, 1);
     } else if (!eff.mothership && mother) {
       this.npcs.delete(mother.id);
     }
@@ -147,11 +152,11 @@ export class Combat {
     }
   }
 
-  spawnGroup(kind, p, count, rich) {
+  spawnGroup(kind, p, count, rich, extra) {
     const a = Math.random() * Math.PI * 2;
     const cx = p.x + Math.cos(a) * 2600, cz = p.z + Math.sin(a) * 2600, cy = p.y + (Math.random() - 0.5) * 600;
     for (let i = 0; i < count; i++) {
-      this.spawnNpc(kind, cx + (Math.random() - 0.5) * 300, cy + (Math.random() - 0.5) * 200, cz + (Math.random() - 0.5) * 300, rich);
+      this.spawnNpc(kind, cx + (Math.random() - 0.5) * 300, cy + (Math.random() - 0.5) * 200, cz + (Math.random() - 0.5) * 300, rich, extra);
     }
   }
 
@@ -187,7 +192,7 @@ export class Combat {
           const ax = target.x + target.vx * lead - n.x, ay = target.y + target.vy * lead - n.y, az = target.z + target.vz * lead - n.z;
           const al = Math.hypot(ax, ay, az) || 1, sp = 0.07;
           const ux = ax / al + (Math.random() - 0.5) * sp, uy = ay / al + (Math.random() - 0.5) * sp, uz = az / al + (Math.random() - 0.5) * sp;
-          this.spawnBolt({ owner: n.id, npc: true, side: n.kind, faction: n.faction, targetKey: target.key || null, x: n.x, y: n.y, z: n.z, vx: ux * BOLT_SPEED, vy: uy * BOLT_SPEED, vz: uz * BOLT_SPEED, dmg: n.dmg, color: def.color });
+          this.spawnBolt({ owner: n.id, npc: true, side: n.kind, faction: n.faction, race: n.race, targetKey: target.key || null, x: n.x, y: n.y, z: n.z, vx: ux * BOLT_SPEED, vy: uy * BOLT_SPEED, vz: uz * BOLT_SPEED, dmg: n.dmg, color: def.color });
         }
       } else {
         if (!n.wander || Math.hypot(n.wander[0] - n.x, n.wander[2] - n.z) < 100) {
@@ -207,6 +212,7 @@ export class Combat {
   // Pirates and the Hollow attack every pilot; faction ships only attack their enemies and
   // anyone who shot at them.
   hostileToPlayer(n, p) {
+    if (n.kind === 'alien') return ALIEN_RACES[n.race]?.disposition === 'hostile' || n.aggro.has(p.key);
     if (!n.faction) return true;
     return this.w.hostileTo(n.faction, p) || n.aggro.has(p.key);
   }
@@ -255,6 +261,7 @@ export class Combat {
           const p = c.player;
           if (p.mode !== 'space' || p.dead) continue;
           if (b.faction && !(this.w.hostileTo(b.faction, p) || b.targetKey === p.key)) continue;
+          if (b.race && !(ALIEN_RACES[b.race].disposition === 'hostile' || b.targetKey === p.key)) continue;
           const [d, t] = segmentDistance(a, e, [p.x, p.y, p.z]);
           if (d < p.stats.radius && t < bestT) { bestT = t; hit = { conn: c }; }
         }
@@ -297,7 +304,7 @@ export class Combat {
     if (conn) {
       n.damagers.add(conn.player.key);
       // Shooting a faction ship brings its whole squad down on you.
-      if (n.faction) for (const o of this.npcs.values()) if (o.faction === n.faction && Math.hypot(o.x - n.x, o.z - n.z) < 3000) o.aggro.add(conn.player.key);
+      if (n.faction || n.race) for (const o of this.npcs.values()) if ((o.faction || o.race) === (n.faction || n.race) && Math.hypot(o.x - n.x, o.z - n.z) < 3000) o.aggro.add(conn.player.key);
     }
     if (n.kind === 'mothership') n.hp = this.w.story.damageMothership(dmg);
     else n.hp -= dmg;
@@ -330,12 +337,13 @@ export class Combat {
     for (const p of crew) {
       p.credits += share;
       const c = this.w.connByName(p.key);
-      if (c) { this.w.sendSelf(c); c.send({ t: 'toast', msg: `${def.name} destroyed: +${share} cr${crew.length > 1 ? ' (party share)' : ''}` }); }
+      if (c) { this.w.sendSelf(c); c.send({ t: 'toast', msg: `${n.race ? ALIEN_RACES[n.race].name + ' ship' : def.name} destroyed: +${share} cr${crew.length > 1 ? ' (party share)' : ''}` }); }
     }
     const luck = 1 + (killer.buffs?.luck || 0);
     if (Math.random() < 0.3 * luck) this.w.giveItem(conn, randomItem(n.richness));
     if (def.relic && Math.random() < 0.05 * luck) this.w.giveItem(conn, makeRelic(def.relic));
     if (KILL_REP[n.kind]) this.w.changeRep(conn, KILL_REP[n.kind]);
+    if (n.race) this.w.discover(conn, [`race:${n.race}`]);
     killer.kills = (killer.kills || 0) + 1;
     if (n.kind === 'hollow') this.w.story.add('kill:hollow', 1, killer.name);
   }
@@ -405,7 +413,7 @@ export class Combat {
     const out = [];
     for (const n of this.npcs.values()) {
       if (!subs.has(sectorKey(...sectorOf(n.x, n.z)))) continue;
-      out.push({ id: n.id, kind: n.kind, x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz, f: n.f, hp: Math.max(0, n.hp), maxHp: n.maxHp, hostile: viewer ? this.hostileToPlayer(n, viewer) : true });
+      out.push({ id: n.id, kind: n.kind, race: n.race, x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz, f: n.f, hp: Math.max(0, n.hp), maxHp: n.maxHp, hostile: viewer ? this.hostileToPlayer(n, viewer) : true });
     }
     return out;
   }

@@ -8,6 +8,7 @@ import { weaponStats } from '/shared/items.js';
 import { deposits } from '/shared/planet.js';
 import { SpaceView } from './space.js';
 import { SurfaceView } from './surface.js';
+import { DungeonView } from './dungeon.js';
 import { Shipyard } from './shipyard.js';
 import { GalaxyMap } from './map.js';
 import { UI } from './ui.js';
@@ -36,15 +37,16 @@ renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 const space = new SpaceView(S);
 const surface = new SurfaceView(S);
+const dungeon = new DungeonView(S);
 const ui = new UI(S, send);
 const yard = new Shipyard(S, send);
 const map = new GalaxyMap(S, send);
-window.__views = { space, surface };
+window.__views = { space, surface, dungeon };
 ui.onShipyard = () => { document.exitPointerLock?.(); yard.show(); };
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
-  for (const cam of [space.camera, surface.camera]) { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
+  for (const cam of [space.camera, surface.camera, dungeon.camera]) { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
   if (yard.open) yard.resize();
 }
 addEventListener('resize', resize);
@@ -87,6 +89,8 @@ const saved = localStorage.getItem('ds_session');
 if (saved) connect({ t: 'resume', token: saved }); else $('name').focus();
 
 // ---- messages -----------------------------------------------------------------------------------
+
+const fxNow = () => (S.you?.mode === 'space' ? space.fx : S.you?.mode === 'dungeon' ? dungeon.fx : surface.fx);
 
 function setSpaceMe(x, y, z, q) {
   S.me = { x, y, z, vx: 0, vy: 0, vz: 0, q: q || S.me?.q || [0, 0, 0, 1] };
@@ -209,6 +213,9 @@ function onMessage(m) {
       ui.discovered(m.keys);
       break;
     case 'sblock': if (surface.planetId === m.planet) surface.applyBlock(m.cell, m.data); break;
+    case 'dungeon': dungeon.enter(m); break;
+    case 'chest': dungeon.markOpened(m.id); break;
+    case 'boss': dungeon.bossDead = true; break;
     case 'teleport':
       S.dead = false;
       if (m.mode === 'space') {
@@ -223,7 +230,15 @@ function onMessage(m) {
         S.npcs.clear();
         space.clearEntities();
         lastSub = 0;
+      } else if (m.mode === 'dungeon') {
+        if (S.you.mode === 'surface') surface.leave();
+        S.you.mode = 'dungeon';
+        S.me = { x: m.x, y: m.y, z: m.z, yaw: dungeon.yaw };
+        S.others.clear();
+        S.creatures.clear();
+        if (S.mode === 'build') toggleBuild();
       } else {
+        if (S.you.mode === 'dungeon') { dungeon.leave(); S.creatures.clear(); }
         S.you.mode = 'surface';
         S.you.planet = m.planet;
         S.me = { x: m.x, y: m.y, z: m.z, yaw: surface.yaw };
@@ -234,12 +249,12 @@ function onMessage(m) {
     case 'jumped': S.lastJump = performance.now(); S.flash = 1; break;
     case 'bolts': for (const b of m.list) space.fx.bolt(b); break;
     case 'hit': {
-      const fx = S.you.mode === 'space' ? space.fx : surface.fx;
+      const fx = fxNow();
       fx.spark(m.x, m.y, m.z, m.shield ? '#4bd8ff' : '#ffe0a0', S.you.mode === 'space' ? 16 : 1.2);
       break;
     }
-    case 'boom': (S.you.mode === 'space' ? space.fx : surface.fx).explosion(m.x, m.y, m.z, m.size, m.organic ? '#9aff6a' : '#ffb060'); break;
-    case 'shot': for (const to of m.to) surface.fx.tracer(m.from, to, m.c); break;
+    case 'boom': fxNow().explosion(m.x, m.y, m.z, m.size, m.organic ? '#9aff6a' : '#ffb060'); break;
+    case 'shot': for (const to of m.to) fxNow().tracer(m.from, to, m.c); break;
     case 'died': S.dead = true; ui.death(m.by, m.respawnIn); break;
     case 'docked': ui.station(m); break;
     case 'shop': ui.shop(m); break;
@@ -334,7 +349,7 @@ addEventListener('keydown', (e) => {
   if (overlayOpen()) return;
   keys.add(k);
   if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
-  if (k === 'b') toggleBuild();
+  if (k === 'b' && S.you.mode !== 'dungeon') toggleBuild();
   if (S.mode === 'build' && k >= '1' && k <= String(BLOCK_IDS.length)) { S.block = BLOCK_IDS[+k - 1]; ui.renderPalette(); }
   if (S.you.mode === 'space') {
     if (k === 'e' && space.nearbyStation()) send({ t: 'dock' });
@@ -342,6 +357,9 @@ addEventListener('keydown', (e) => {
       const p = space.nearbyPlanet(serverTime());
       if (p) send({ t: 'land', planet: p.id }); else ui.toast('No planet close enough to land on.');
     }
+  } else if (S.you.mode === 'dungeon') {
+    if (k === 'e') { const it = dungeon.interaction(); if (it) send({ t: 'interact', what: it.what, id: it.id }); }
+    if (k === 'v') dungeon.firstPerson = !dungeon.firstPerson;
   } else {
     if (k === 'e') { const it = surface.interaction(); if (it) send({ t: 'interact', what: it.what, id: it.id }); }
     if (k === 'y') { const it = surface.interaction(); if (it?.what === 'ship') ui.onShipyard(); else ui.toast('Walk up to your ship to use the shipyard.'); }
@@ -496,6 +514,45 @@ function surfaceFrame(dt, now) {
   ui.hud(now, { prompt, hint });
 }
 
+function dungeonFrame(dt, now) {
+  if (!dungeon.key || !S.me || S.me.yaw === undefined) return;
+  const you = S.you, me = S.me;
+  const active = !S.dead && !overlayOpen() && locked();
+  const input = active ? {
+    fwd: (held('w', 'arrowup') ? 1 : 0) - (held('s', 'arrowdown') ? 1 : 0),
+    strafe: (held('d', 'arrowright') ? 1 : 0) - (held('a', 'arrowleft') ? 1 : 0),
+    jump: held(' '), run: held('shift'),
+  } : {};
+  if (!S.dead) dungeon.walk(dt, input, active ? look : { x: 0, y: 0 });
+  if (active) {
+    const w = you.inv.items.find((i) => i.id === you.inv.equipped.weapon);
+    if (mouse.left && w && now - lastShot > 1000 / weaponStats(w).rate) {
+      lastShot = now;
+      const d = dungeon.shotDir();
+      send({ t: 'shoot', dir: [d.x, d.y, d.z] });
+    } else if (mouse.left && !w && now - lastShot > 2000) { lastShot = now; ui.toast('No weapon equipped. Press Tab to open your gear.'); }
+  }
+  if (now - lastSend > 100) {
+    lastSend = now;
+    send({ t: 'walk', x: me.x, y: me.y, z: me.z, yaw: dungeon.yaw });
+  }
+  dungeon.update(dt, serverTime());
+  renderer.render(dungeon.scene, dungeon.camera);
+
+  const it = dungeon.interaction();
+  let prompt = it ? it.text : '';
+  if (!locked() && !overlayOpen()) prompt = 'Click to take the controls';
+  const cos = Math.cos(dungeon.yaw), sin = Math.sin(dungeon.yaw), R = 60;
+  const dot = (x, z, c, s) => { const dx = (x - me.x) / R, dz = (z - me.z) / R; return { x: dx * cos - dz * sin, y: dx * sin + dz * cos, c, s }; };
+  const dots = [];
+  for (const c of S.creatures.values()) dots.push(dot(c.x, c.z, c.boss ? '#ff3a3a' : '#ff8a5a', c.boss ? 8 : 4));
+  for (const c of dungeon.layout.chests) if (!dungeon.opened.has(c.id)) dots.push(dot(c.x, c.z, c.boss ? '#c27bff' : '#ffe08a', 5));
+  dots.push(dot(dungeon.layout.start[0], dungeon.layout.start[1], '#78ffaa', 7));
+  for (const o of S.others.values()) dots.push(dot(o.x, o.z, o.color, 4));
+  ui.radar(radarCtx, dots);
+  ui.hud(now, { prompt, hint: 'LMB shoot · E interact · V view · Shift run · H help', dungeon: { name: dungeon.msg.name, depth: dungeon.msg.depth, left: S.creatures.size, boss: dungeon.bossDead } });
+}
+
 // Target brackets for hostiles and party members, with arrows at the screen edge when off-screen.
 const marks = $('marks'), marksCtx = marks.getContext('2d');
 function drawMarks() {
@@ -569,6 +626,7 @@ function frame(now) {
     if (S.connected && S.you && !S.idle) {
       if (S.you.mode === 'space' && S.me?.q) spaceFrame(dt, now);
       else if (S.you.mode === 'surface') { surfaceFrame(dt, now); marksCtx.clearRect(0, 0, marks.width, marks.height); }
+      else if (S.you.mode === 'dungeon') { dungeonFrame(dt, now); marksCtx.clearRect(0, 0, marks.width, marks.height); }
     } else if (!S.connected) {
       idleFrame(dt, now);
     }

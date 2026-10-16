@@ -329,3 +329,80 @@ test('factions, shrines, ruins and reputation', { timeout: 60000 }, async (t) =>
   assert.ok(world.data.war.rebellion >= 1);
   a.c.close();
 });
+
+test('dungeons: enter as a party, clear the boss, loot, leave; alien traders', { timeout: 60000 }, async (t) => {
+  const { structuresOf } = await import('../shared/planet.js');
+  const { STRUCTURES } = await import('../shared/content/structures.js');
+  const { ALIEN_RACES } = await import('../shared/content/aliens.js');
+  const srv = await startServer({ port: 0, dataFile: null, seed: SEED, log: () => {} });
+  t.after(() => srv.close());
+  const world = srv.world;
+  let entrance = null, village = null;
+  for (let r = 0; r < 30 && !(entrance && village); r++) for (let x = -r; x <= r; x++) for (const z of [-r, r]) {
+    for (const pl of generateSector(x, z, SEED).planets.filter((q) => q.landable && !q.starter)) {
+      for (const st of structuresOf(pl)) {
+        if (!entrance && STRUCTURES[st.type].kind === 'dungeon') entrance = { pl, st };
+        if (!village && st.race && ALIEN_RACES[st.race].trader) village = { pl, st };
+      }
+    }
+  }
+  assert.ok(entrance && village, 'found a dungeon entrance and a trading village');
+
+  const a = await account(srv.port, 'Delver'), b = await account(srv.port, 'Mate');
+  a.c.send({ t: 'party_invite', name: 'Mate' });
+  await b.c.wait((m) => m.t === 'party_invite');
+  b.c.send({ t: 'party_accept' });
+  await a.c.wait((m) => m.t === 'party' && m.party?.members.length === 2);
+  const ca = world.connByName('delver'), cb = world.connByName('mate');
+
+  // Both walk in through the same entrance and land in the same instance.
+  for (const [c, cl] of [[ca, a.c], [cb, b.c]]) {
+    world.surfaces.place(c, entrance.pl.id);
+    Object.assign(c.player, { px: entrance.st.x + entrance.st.radius + 2, pz: entrance.st.z });
+    cl.send({ t: 'interact', what: 'structure', id: entrance.st.id });
+  }
+  const da = await a.c.wait((m) => m.t === 'dungeon');
+  const db = await b.c.wait((m) => m.t === 'dungeon');
+  assert.equal(da.key, db.key);
+  assert.equal(ca.player.mode, 'dungeon');
+  const inst = world.dungeons.instances.get(da.key);
+  const snap = await a.c.wait((m) => m.t === 'snap' && m.mode === 'dungeon' && m.players.length === 1);
+  assert.ok(snap.creatures.length > 10);
+
+  // The boss chest stays shut while the boss lives.
+  const bossChest = inst.layout.chests.find((c) => c.boss);
+  Object.assign(ca.player, { px: bossChest.x, pz: bossChest.z });
+  a.c.send({ t: 'interact', what: 'chest', id: bossChest.id });
+  await a.c.wait((m) => m.t === 'toast' && /Sealed/.test(m.msg));
+  // Kill the boss (directly, to keep the test short) and loot.
+  const boss = [...inst.enemies.values()].find((e) => e.boss);
+  world.dungeons.hurtEnemy(inst, boss, 1e9, ca);
+  await a.c.wait((m) => m.t === 'boss');
+  const credits = ca.player.credits;
+  a.c.send({ t: 'interact', what: 'chest', id: bossChest.id });
+  await a.c.wait((m) => m.t === 'chest' && m.id === bossChest.id);
+  assert.ok(ca.player.credits > credits);
+  a.c.send({ t: 'interact', what: 'chest', id: bossChest.id });
+  await a.c.wait((m) => m.t === 'toast' && /already emptied/.test(m.msg));
+
+  // Walls stop you: walking into solid rock is refused.
+  a.c.send({ t: 'walk', x: 1, y: 0, z: 1, yaw: 0 });
+  await a.c.wait((m) => m.t === 'teleport' && m.mode === 'dungeon');
+
+  // Leave through the entrance and you're back on the surface beside it.
+  Object.assign(ca.player, { px: inst.layout.start[0], pz: inst.layout.start[1] });
+  a.c.send({ t: 'interact', what: 'exit' });
+  await a.c.wait((m) => m.t === 'teleport' && m.mode === 'surface');
+  assert.equal(ca.player.mode, 'surface');
+
+  // A friendly alien village trades.
+  world.surfaces.place(ca, village.pl.id);
+  Object.assign(ca.player, { px: village.st.x + village.st.radius + 2, pz: village.st.z });
+  a.c.send({ t: 'interact', what: 'structure', id: village.st.id });
+  const shop = await a.c.wait((m) => m.t === 'shop');
+  assert.match(shop.name, new RegExp(ALIEN_RACES[village.st.race].name));
+  ca.player.credits = 1e6;
+  a.c.send({ t: 'buy', slot: 0 });
+  await a.c.wait((m) => m.t === 'toast' && /Bought/.test(m.msg));
+  a.c.close(); b.c.close();
+});

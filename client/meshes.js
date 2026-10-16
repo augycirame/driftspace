@@ -128,9 +128,14 @@ export const REBEL_SHIP = [
   [1, 0, -1, 'gun'], [-1, 0, 0, 'wing'], [1, 0, 0, 'hull'], [0, -1, 0, 'gun'],
 ];
 
-export function buildNpc(kind) {
+export function buildNpc(kind, race = null) {
   const group = new THREE.Group();
-  if (kind === 'imperial' || kind === 'rebel') {
+  if (kind === 'alien' && race) {
+    const s = buildShip(race.ship, race.color);
+    group.add(s);
+    group.add(glowSprite(race.accent, 40, 0.35));
+    group.userData.flames = s.userData.flames;
+  } else if (kind === 'imperial' || kind === 'rebel') {
     const s = buildShip(kind === 'imperial' ? IMPERIAL_SHIP : REBEL_SHIP, kind === 'imperial' ? '#f0e0a0' : '#d8603a');
     group.add(s);
     group.userData.flames = s.userData.flames;
@@ -196,7 +201,7 @@ export function buildPerson(color, armor = 0) {
 }
 
 // Creatures come in several body plans (from the content library's "shape").
-export function buildCreature(color, size, seed = 1, shape = 'quad') {
+export function buildCreature(color, size, seed = 1, shape = 'quad', def = {}) {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, flatShading: true });
   const eyeMat = new THREE.MeshBasicMaterial({ color: shape === 'golem' ? '#d0a0ff' : '#ffe060' });
@@ -208,7 +213,113 @@ export function buildCreature(color, size, seed = 1, shape = 'quad') {
       g.add(eye);
     }
   };
-  if (shape === 'serpent') {
+  if (shape === 'crab') {
+    const body = new THREE.Mesh(lumpy(0.7, 1, seed, 0.2), mat);
+    body.scale.set(size * 1.5, size * 0.55, size * 1.1);
+    body.position.y = size * 0.7;
+    g.add(body);
+    eyes(size * 1.05, -0.75 * size, 0.3);
+    for (const s of [-1, 1]) {
+      const claw = new THREE.Mesh(new THREE.BoxGeometry(0.5 * size, 0.35 * size, 0.8 * size), mat);
+      claw.position.set(s * 0.9 * size, size * 0.8, -1.1 * size);
+      g.add(claw);
+      for (let i = 0; i < 3; i++) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.9 * size, 0.12 * size, 0.12 * size), mat);
+        leg.position.set(s * 1.2 * size, size * 0.4, (i - 1) * 0.5 * size);
+        leg.rotation.z = s * -0.5;
+        g.add(leg);
+        legs.push(leg);
+      }
+    }
+  } else if (shape === 'tentacled') {
+    const body = new THREE.Mesh(lumpy(0.8, 1, seed, 0.3), new THREE.MeshStandardMaterial({ color, roughness: 0.5, flatShading: true, emissive: color, emissiveIntensity: 0.15 }));
+    body.scale.set(size, size * 1.1, size);
+    body.position.y = size * 1.6;
+    g.add(body);
+    eyes(size * 1.8, -0.75 * size, 0.25);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.06 * size, 0.18 * size, 1.6 * size, 5), mat);
+      t.position.set(Math.cos(a) * 0.55 * size, size * 0.75, Math.sin(a) * 0.55 * size);
+      t.rotation.set(Math.sin(a) * 0.4, 0, -Math.cos(a) * 0.4);
+      g.add(t);
+      legs.push(t);
+    }
+    g.userData.sway = true;
+  } else if (shape === 'strider') {
+    const body = new THREE.Mesh(lumpy(0.5, 1, seed, 0.2), mat);
+    body.scale.set(size * 0.9, size * 0.6, size * 1.3);
+    body.position.y = size * 3.2;
+    g.add(body);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.08 * size, 0.12 * size, 1.2 * size, 5), mat);
+    neck.position.set(0, size * 3.7, -0.7 * size);
+    neck.rotation.x = 0.6;
+    g.add(neck);
+    eyes(size * 4.2, -1.05 * size, 0.12);
+    for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * size, 0.09 * size, 3.3 * size, 5), mat);
+      leg.position.set(lx * 0.45 * size, size * 1.6, lz * 0.5 * size);
+      g.add(leg);
+      legs.push(leg);
+    }
+  } else if (shape === 'alien') {
+    const skin = new THREE.MeshStandardMaterial({ color, roughness: 0.6, flatShading: true });
+    const trim = new THREE.MeshStandardMaterial({ color: def.accent || '#ffffff', roughness: 0.4, emissive: def.accent || '#000000', emissiveIntensity: 0.25 });
+    const tall = def.head === 'tall' ? 1.25 : 1;
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.8 * tall, 4, 8), skin);
+    torso.scale.setScalar(size);
+    torso.position.y = size * 1.15 * tall;
+    g.add(torso);
+    const hy = size * (1.95 * tall);
+    let head;
+    if (def.head === 'insect') head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6).scale(1, 0.8, 1.4), skin);
+    else if (def.head === 'orb') head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 12, 10), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.9, transparent: true, opacity: 0.85 }));
+    else if (def.head === 'stone') head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32, 0), skin);
+    else if (def.head === 'tentacle') head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 8).scale(1, 1.3, 1), skin);
+    else head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8).scale(1, def.head === 'tall' ? 1.6 : 1, 1), skin);
+    head.scale.multiplyScalar(size);
+    head.position.y = hy;
+    g.add(head);
+    if (def.head === 'crest') {
+      const crest = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.6, 4), trim);
+      crest.scale.setScalar(size);
+      crest.position.set(0, hy + 0.35 * size, 0.1 * size);
+      crest.rotation.x = -0.6;
+      g.add(crest);
+    }
+    if (def.head === 'insect') for (const s of [-1, 1]) {
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.6, 3), trim);
+      ant.scale.setScalar(size);
+      ant.position.set(s * 0.12 * size, hy + 0.35 * size, -0.2 * size);
+      ant.rotation.z = s * 0.4;
+      g.add(ant);
+    }
+    if (def.head === 'tentacle') for (let i = 0; i < 4; i++) {
+      const t = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.06, 0.6, 4), skin);
+      t.scale.setScalar(size);
+      t.position.set((i - 1.5) * 0.12 * size, hy - 0.45 * size, -0.2 * size);
+      g.add(t);
+    }
+    if (def.head !== 'orb') eyes(hy + 0.02 * size, -0.24 * size, 0.1);
+    const sash = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.15, 0.4), trim);
+    sash.scale.setScalar(size);
+    sash.position.y = size * 1.25 * tall;
+    g.add(sash);
+    for (let k = 0; k < (def.arms || 2) / 2; k++) for (const s of [-1, 1]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.12), skin);
+      arm.scale.setScalar(size);
+      arm.position.set(s * 0.42 * size, size * (1.35 - k * 0.3) * tall, 0);
+      arm.rotation.z = s * (0.15 + k * 0.4);
+      g.add(arm);
+    }
+    for (const s of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.8 * tall, 0.16), skin);
+      leg.scale.setScalar(size);
+      leg.position.set(s * 0.16 * size, 0.4 * size * tall, 0);
+      g.add(leg);
+      legs.push(leg);
+    }
+  } else if (shape === 'serpent') {
     for (let i = 0; i < 6; i++) {
       const seg = new THREE.Mesh(new THREE.SphereGeometry(size * (0.55 - i * 0.06), 8, 6), mat);
       seg.position.set(0, size * 0.5, i * size * 0.7);
@@ -292,11 +403,11 @@ export function buildCreature(color, size, seed = 1, shape = 'quad') {
 }
 
 // A structure from the content library's part list. '@god' colors take the shrine's god color.
-export function buildStructure(def, godColor) {
+export function buildStructure(def, godColor, raceColors = null) {
   const g = new THREE.Group();
   const mats = new Map();
   const matFor = (color, glow) => {
-    const c = color === '@god' ? godColor || '#b86bff' : color;
+    const c = color === '@god' ? godColor || '#b86bff' : color === '@race' ? raceColors?.color || '#8a9aa8' : color === '@accent' ? raceColors?.accent || '#ffffff' : color;
     const key = c + (glow ? '!' : '');
     if (!mats.has(key)) mats.set(key, new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, metalness: 0.1, flatShading: true, emissive: glow ? c : '#000000', emissiveIntensity: glow ? 0.9 : 0 }));
     return mats.get(key);
@@ -314,7 +425,7 @@ export function buildStructure(def, godColor) {
     if (tilt) m.rotation.z = tilt;
     g.add(m);
     if (glow) {
-      const sp = glowSprite(color === '@god' ? godColor || '#b86bff' : color, Math.max(a, b || 0, c || 0) * 3, 0.5);
+      const sp = glowSprite(color === '@god' ? godColor || '#b86bff' : color === '@accent' ? raceColors?.accent || '#ffffff' : color === '@race' ? raceColors?.color || '#8a9aa8' : color, Math.max(a, b || 0, c || 0) * 3, 0.5);
       sp.position.set(x, y, z);
       g.add(sp);
     }

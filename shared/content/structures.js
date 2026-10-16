@@ -2,7 +2,7 @@
 // ancient gods, Imperial and rebel bases, wrecks. A planet picks a few whose tags match its
 // terrain (and, for faction bases, whose territory it's in).
 //
-//   kind       ruin · shrine · imperial · rebel · wreck · holy
+//   kind       ruin · shrine · imperial · rebel · wreck · holy · dungeon · village
 //   tags       terrain tags it can appear on ('any' for anywhere)
 //   territory  only appears in that territory (empire, rebellion, capital)
 //   parts      what it's built from, relative to its centre. Each part is
@@ -137,6 +137,45 @@ export const STRUCTURES = {
       ['sphere', 0, 46, 0, 4, 0, 0, '#fff4c0', true], ['box', 0, 8, -30.4, 12, 14, 0.8, GOLD, true],
     ],
     lore: 'The heart of the Empire. The Radiant Throne itself sits beneath the golden dome, and nobody has seen the Emperor’s face in four hundred years.',
+  },
+
+  // ---- dungeon entrances: interact to go underground (themes in dungeons.js) ---------------
+  cryptEntrance: {
+    name: 'Crypt Entrance', kind: 'dungeon', dungeon: 'crypt', tags: ['bone', 'ancient', 'sand', 'ash', 'rock', 'scorched', 'temperate'], rarity: 3, radius: 9,
+    parts: [['box', 0, 1, 0, 12, 2, 10, DARKSTONE], ['box', -4, 4.5, 0, 1.6, 7, 1.6, STONE], ['box', 4, 4.5, 0, 1.6, 7, 1.6, STONE], ['box', 0, 8.5, 0, 10, 1.4, 2, STONE], ['box', 0, 3, 0.2, 6, 4.5, 0.5, '#050505'], ['sphere', 0, 6.5, 0.6, 0.6, 0, 0, '#9affc8', true]],
+    lore: 'Stairs lead down into the dark. Something down there has been waiting a long time.',
+  },
+  hiveMound: {
+    name: 'Hive Mound', kind: 'dungeon', dungeon: 'hive', tags: ['sand', 'fungal', 'toxic', 'forest'], rarity: 3, radius: 10,
+    parts: [['sphere', 0, 0, 0, 9, 0, 0, '#8a6a3a'], ['cone', 0, 9, 0, 4, 10, 8, '#7a5a2a'], ['cyl', 0, 2, -8.2, 2.4, 4, 0, '#140c04'], ['sphere', 0, 14, 0, 0.8, 0, 0, '#ffb03a', true]],
+    lore: 'A mound of hardened resin, buzzing faintly. The tunnel mouth is just wide enough for a pilot.',
+  },
+  forgeGate: {
+    name: 'Gate of the Forge', kind: 'dungeon', dungeon: 'forge', tags: ['fire', 'ash', 'rock'], rarity: 2, radius: 10,
+    parts: [['box', 0, 1, 0, 14, 2, 10, '#2a1a14'], ['box', -5, 6, 0, 2.4, 10, 2.4, '#3a2418'], ['box', 5, 6, 0, 2.4, 10, 2.4, '#3a2418'], ['box', 0, 11.5, 0, 13, 2, 3, '#3a2418'], ['box', 0, 5, 0.3, 7.5, 8, 0.5, '#ff5a1a', true]],
+    lore: 'An iron gate in the mountainside, glowing from within. You can hear hammering.',
+  },
+  crystalCave: {
+    name: 'Crystal Cave', kind: 'dungeon', dungeon: 'crystal', tags: ['crystal', 'ice', 'salt'], rarity: 3, radius: 9,
+    parts: [['sphere', 0, 0, 0, 7, 0, 0, '#5a5a7a'], ['cone', -4, 5, 2, 1.5, 9, 5, '#c8a0ff', true], ['cone', 4, 4, 1, 1.2, 7, 5, '#a0e8ff', true], ['cone', 1, 6, -3, 1, 6, 5, '#c8a0ff', true], ['cyl', 0, 2, -6.5, 2.6, 4.5, 0, '#0a0a14']],
+    lore: 'A cave mouth fringed with humming crystal.',
+  },
+  drownedTemple: {
+    name: 'Drowned Temple', kind: 'dungeon', dungeon: 'drowned', tags: ['water', 'toxic', 'fungal'], rarity: 2, radius: 10,
+    parts: [['box', 0, 1, 0, 14, 2, 14, '#2a4a52'], ['cyl', -5, 5, -5, 1.2, 8, 0, '#3a5a62'], ['cyl', 5, 5, -5, 1.2, 8, 0, '#3a5a62', false, 0.2], ['cone', 0, 6, 0, 6, 6, 4, '#1e3a42'], ['cyl', 0, 2.2, -6.5, 2.2, 4, 0, '#041016'], ['sphere', 0, 10, 0, 1, 0, 0, '#c04ae8', true]],
+    lore: 'Half-sunk steps lead down into green water and a staircase beneath it.',
+  },
+
+  // ---- alien villages: built by whichever race claims the system (see aliens.js) ----------
+  alienVillage: {
+    name: 'Alien Village', kind: 'village', tags: [], rarity: 0, radius: 22,
+    parts: [
+      ['sphere', 0, 0, 0, 7, 0, 0, '@race'], ['cone', 0, 11, 0, 2, 14, 6, '@accent', true],
+      ['sphere', 13, 0, 4, 4, 0, 0, '@race'], ['sphere', -12, 0, 6, 4.5, 0, 0, '@race'], ['sphere', 4, 0, -13, 3.5, 0, 0, '@race'],
+      ['sphere', -8, 0, -11, 3, 0, 0, '@race'], ['cyl', 0, 0.2, 0, 20, 0.4, 0, '@accent'], ['ring', 0, 16, 0, 3, 0.3, 0, '@accent', true],
+    ],
+    residents: 4, warriors: 3,
+    lore: 'An alien settlement. If they trade, their merchants sell things no human shop has.',
   },
 };
 export const STRUCTURE_IDS = Object.keys(STRUCTURES);
