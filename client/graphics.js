@@ -8,9 +8,9 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { InkPass, stylize } from './toon.js';
 
-export const STYLES = { anime: 'Anime (cel-shaded)', realistic: 'Realistic' };
+export const STYLES = { anime: 'Anime', realistic: 'Realistic' };
 // Ink line weight per kind of scene.
-const INK = { space: { thickness: 1.0, normalK: 1.0 }, surface: { thickness: 1.3, normalK: 0.9 }, dungeon: { thickness: 1.2, normalK: 0.9 } };
+const INK = { space: { thickness: 1.4, normalK: 0.9 }, surface: { thickness: 1.7, normalK: 0.8 }, dungeon: { thickness: 1.6, normalK: 0.8 } };
 
 export const QUALITY = {
   low:    { name: 'Low',    scale: 0.75, bloom: false, shadows: 0,    sky: false, flora: 0.5, planetTex: 256,  flare: false },
@@ -114,6 +114,10 @@ export class Graphics {
       this.ink.scene = scene;
       this.ink.camera = camera;
       Object.assign(this.ink.settings, INK[kind]);
+      // Speed lines kick in near top speed (set each frame by the game as a 0..1 fraction).
+      const target = kind === 'space' ? Math.max(0, (this.speed || 0) - 0.55) / 0.45 : 0;
+      this.ink.settings.speed = kind === 'space' ? this.ink.settings.speed + (target - this.ink.settings.speed) * 0.1 : 0;
+      this.ink.settings.time = performance.now() / 1000;
     }
     if (this.bloom) {
       const [strength, radius, threshold] = BLOOM[kind];

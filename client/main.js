@@ -435,6 +435,7 @@ function spaceFrame(dt, now) {
   }
 
   const t = serverTime();
+  gfx.speed = Math.hypot(me.vx, me.vy, me.vz) / st.maxSpeed;
   space.update(dt, t, { thrusting: (input.fwd || 0) > 0, mineTarget: S.mineTarget, mode: S.mode, block: S.block });
   gfx.render(space.scene, space.camera, 'space');
 

@@ -1,6 +1,7 @@
 // 3D models built procedurally: block ships, NPC ships, people, creatures, stations, labels.
 
 import * as THREE from 'three';
+import { addInkHull } from './toon.js';
 import { SHIP_PARTS, SHIP_BLOCK } from '/shared/rules.js';
 import { mulberry32 } from '/shared/rng.js';
 
@@ -182,73 +183,99 @@ export const setAnimeMode = (on) => { animeMode = on; };
 // An anime eye: white, a big colored iris, a dark pupil and a highlight. Faces -z.
 function animeEye(size, iris = '#3a6ae8') {
   const e = new THREE.Group();
-  const white = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10).scale(0.8, 1.15, 0.35), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
-  const ir = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 10).scale(1, 1.1, 0.3), new THREE.MeshBasicMaterial({ color: iris }));
-  ir.position.set(0, -0.08, -0.12);
-  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8).scale(1, 1.1, 0.3), new THREE.MeshBasicMaterial({ color: '#10101a' }));
-  pupil.position.set(0, -0.08, -0.2);
-  const shine = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
-  shine.position.set(0.22, 0.25, -0.26);
-  e.add(white, ir, pupil, shine);
+  const B = (c) => new THREE.MeshBasicMaterial({ color: c });
+  const white = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10).scale(0.8, 1.15, 0.3), B('#d8d8de'));
+  const irisColor = new THREE.Color(iris).multiplyScalar(0.75);
+  const ir = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 10).scale(1, 1.25, 0.3), B(irisColor));
+  ir.position.set(0, -0.12, -0.2);
+  const deep = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8).scale(1, 0.6, 0.2), B(irisColor.clone().multiplyScalar(0.55)));
+  deep.position.set(0, 0.12, -0.33);
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8).scale(1, 1.2, 0.3), B('#10101a'));
+  pupil.position.set(0, -0.08, -0.36);
+  const shine = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6).scale(1, 1, 0.3), B('#ffffff'));
+  shine.position.set(0.24, 0.22, -0.48);
+  const shine2 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 4).scale(1, 1, 0.3), B('#ffffff'));
+  shine2.position.set(-0.2, -0.38, -0.46);
+  // Lashes: a thick dark line over the top of the eye.
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.13, 4, 14, Math.PI * 0.9).scale(1, 1.25, 0.6), B('#1a1020'));
+  lash.rotation.z = Math.PI * 0.05;
+  lash.position.z = -0.12;
+  e.add(white, ir, deep, pupil, shine, shine2, lash);
   e.scale.setScalar(size);
   return e;
 }
 
-// An anime pilot: big head, spiky hair in the pilot's color, big eyes, a sleek flight suit.
+// An anime pilot: chibi proportions, a big expressive face, layered spiky hair in the pilot's
+// color with a shine band, a flight jacket with a collar and a scarf trailing behind.
 function buildAnimePerson(color, armor) {
   const g = new THREE.Group();
-  const suit = new THREE.MeshStandardMaterial({ color: '#2a3048', roughness: 0.6 });
-  const trim = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
-  const skin = new THREE.MeshStandardMaterial({ color: '#ffe0c8', roughness: 0.8 });
-  const hairMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
-  const plate = new THREE.MeshStandardMaterial({ color: armor > 60 ? '#e8c547' : armor > 20 ? '#b8c8e0' : '#5a6478', roughness: 0.4, metalness: 0.4 });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.6, 4, 10), suit);
-  body.position.y = 0.85;
-  g.add(body);
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.12, 0.62), trim);
-  stripe.position.y = 1.05;
-  g.add(stripe);
-  if (armor > 0) {
-    for (const s of [-1, 1]) {
-      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8).scale(1.2, 0.7, 1), plate);
-      pad.position.set(s * 0.36, 1.3, 0);
-      g.add(pad);
-    }
+  const M = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6, ...o });
+  const hairColor = new THREE.Color(color);
+  const jacket = M('#2b3456'), pants = M('#1e2236'), trim = M(color), white = M('#f4f2ee'), skin = M('#ffe3cf');
+  const hairMat = M(hairColor), hairDark = M(hairColor.clone().multiplyScalar(0.7));
+  const plate = M(armor > 60 ? '#e8c547' : armor > 20 ? '#c8d4e8' : '#6a7488', { roughness: 0.35, metalness: 0.3 });
+  const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
+    g.add(m);
+    return m;
+  };
+  // Legs and boots.
+  for (const sx of [-1, 1]) {
+    add(new THREE.CapsuleGeometry(0.1, 0.36, 4, 8), pants, sx * 0.13, 0.33, 0);
+    add(new THREE.CapsuleGeometry(0.11, 0.12, 4, 8).rotateX(Math.PI / 2), white, sx * 0.13, 0.09, -0.05);
   }
-  for (const s of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.45, 4, 8), suit);
-    leg.position.set(s * 0.14, 0.32, 0);
-    g.add(leg);
-    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.3), trim);
-    boot.position.set(s * 0.14, 0.07, -0.04);
-    g.add(boot);
+  // Jacket body, belt, open collar.
+  add(new THREE.CylinderGeometry(0.24, 0.3, 0.62, 12), jacket, 0, 0.86, 0);
+  add(new THREE.CylinderGeometry(0.305, 0.305, 0.08, 12), trim, 0, 0.6, 0);
+  add(new THREE.BoxGeometry(0.06, 0.5, 0.02), white, 0, 0.88, -0.27);
+  add(new THREE.TorusGeometry(0.2, 0.06, 6, 14).rotateX(Math.PI / 2), white, 0, 1.15, 0);
+  // Scarf: wrapped at the neck, two tails flying back.
+  add(new THREE.TorusGeometry(0.17, 0.075, 8, 16).rotateX(Math.PI / 2), trim, 0, 1.2, 0);
+  const tails = [];
+  for (const sx of [-1, 1]) {
+    const tail = add(new THREE.BoxGeometry(0.13, 0.04, 0.6).translate(0, 0, 0.3), trim, sx * 0.07, 1.17, 0.12, -0.5, sx * 0.25, 0);
+    tails.push(tail);
   }
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 18, 14), skin);
-  head.position.y = 1.72;
-  g.add(head);
-  // Spiky hair: a cap plus tufts sweeping back and down over the forehead.
-  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.43, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), hairMat);
-  cap.position.set(0, 1.76, 0.03);
-  g.add(cap);
-  const tufts = [[0, 0.32, -0.28, -0.9, 0], [-0.2, 0.28, -0.26, -0.8, 0.5], [0.2, 0.28, -0.26, -0.8, -0.5], [-0.33, 0.12, -0.05, -0.2, 1.2],
-    [0.33, 0.12, -0.05, -0.2, -1.2], [0, 0.3, 0.3, 0.9, 0], [-0.22, 0.25, 0.3, 0.8, 0.6], [0.22, 0.25, 0.3, 0.8, -0.6], [0, 0.42, 0, 0, 0]];
-  for (const [x, y, z, rx, rz] of tufts) {
-    const t = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.42, 5), hairMat);
-    t.position.set(x, 1.72 + y, z);
-    t.rotation.set(rx + Math.PI, 0, rz);
-    if (z > 0.2 || y > 0.4) t.rotation.set(rx, 0, rz);
-    g.add(t);
-  }
-  for (const s of [-1, 1]) {
-    const eye = animeEye(0.1, color);
-    eye.position.set(s * 0.15, 1.66, -0.36);
+  // Arms; the right one reaches forward to hold the gun.
+  add(new THREE.CapsuleGeometry(0.08, 0.38, 4, 8), jacket, -0.33, 0.88, 0, 0, 0, 0.18);
+  add(new THREE.SphereGeometry(0.08, 8, 6), skin, -0.38, 0.62, 0);
+  add(new THREE.CapsuleGeometry(0.08, 0.3, 4, 8), jacket, 0.31, 0.98, -0.19, 1.08, 0, 0);
+  if (armor > 0) for (const sx of [-1, 1]) add(new THREE.SphereGeometry(0.17, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.1, 0.8, 1), plate, sx * 0.31, 1.1, 0);
+  // Head: large, slightly wide, with the face on -z.
+  const hy = 1.62;
+  add(new THREE.SphereGeometry(0.46, 22, 16).scale(1.05, 1, 1), skin, 0, hy, 0);
+  for (const sx of [-1, 1]) add(new THREE.SphereGeometry(0.07, 8, 6).scale(0.6, 1, 0.6), skin, sx * 0.47, hy - 0.02, 0);
+  for (const sx of [-1, 1]) {
+    const eye = animeEye(0.14, color);
+    eye.position.set(sx * 0.17, hy - 0.06, -0.41);
+    eye.rotation.y = -sx * 0.28;
     g.add(eye);
+    const brow = add(new THREE.BoxGeometry(0.14, 0.025, 0.02), hairDark, sx * 0.17, hy + 0.12, -0.42, 0, -sx * 0.28, sx * -0.12);
+    brow.userData.noHull = true;
+    const blush = add(new THREE.CircleGeometry(0.06, 12).scale(1.4, 0.7, 1), new THREE.MeshBasicMaterial({ color: '#ff8fa3', transparent: true, opacity: 0.55 }), sx * 0.25, hy - 0.2, -0.385, 0, Math.PI + sx * 0.5, 0);
   }
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.6), new THREE.MeshStandardMaterial({ color: '#3a4058', roughness: 0.4 }));
-  gun.position.set(0.32, 0.95, -0.3);
-  g.add(gun);
+  const mouth = add(new THREE.TorusGeometry(0.035, 0.009, 4, 10, Math.PI), new THREE.MeshBasicMaterial({ color: '#5a2a30' }), 0, hy - 0.24, -0.44, 0, 0, Math.PI);
+  mouth.userData.noHull = true;
+  // Hair: a cap over the top and back, bangs over the forehead, side locks, back spikes, an ahoge.
+  add(new THREE.SphereGeometry(0.5, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(1.06, 1, 1.04), hairMat, 0, hy + 0.04, 0.03, 0.35, 0, 0);
+  add(new THREE.SphereGeometry(0.49, 18, 10, Math.PI * 0.1, Math.PI * 0.8, Math.PI * 0.35, Math.PI * 0.4), hairMat, 0, hy, 0.04);
+  const spike = (len, r = 0.11) => new THREE.ConeGeometry(r, len, 8).scale(1, 1, 0.6).translate(0, -len / 2, 0);
+  for (const [x, rz, len] of [[-0.3, 0.35, 0.3], [-0.16, 0.15, 0.34], [0, -0.05, 0.3], [0.15, -0.2, 0.35], [0.3, -0.35, 0.28]]) {
+    add(spike(len, 0.1), hairMat, x, hy + 0.36, -0.36, 0.3, 0, rz);
+  }
+  for (const sx of [-1, 1]) add(spike(0.55, 0.1), hairMat, sx * 0.42, hy + 0.1, -0.16, -0.1, 0, sx * 0.12);
+  for (const [x, y, rx, rz, len] of [[0, 0.3, -0.9, 0, 0.5], [-0.25, 0.22, -0.8, 0.45, 0.45], [0.25, 0.22, -0.8, -0.45, 0.45], [-0.18, -0.05, -0.45, 0.25, 0.45], [0.18, -0.05, -0.45, -0.25, 0.45], [0, -0.02, -0.3, 0, 0.42]]) {
+    add(spike(len, 0.13), hairMat, x, hy + y, 0.36, rx, 0, rz);
+  }
+  add(new THREE.TorusGeometry(0.12, 0.025, 5, 10, Math.PI * 1.2), hairMat, 0.05, hy + 0.58, -0.05, 0, Math.PI / 4, 0.3);
+  // The anime "angel ring": a shine band across the hair.
+  const ring = add(new THREE.TorusGeometry(0.495, 0.024, 4, 28, Math.PI).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: hairColor.clone().lerp(new THREE.Color('#ffffff'), 0.65) }), 0, hy + 0.22, 0.03);
+  ring.userData.noHull = true;
+  const gun = add(new THREE.BoxGeometry(0.1, 0.13, 0.55), M('#3a4058', { roughness: 0.4 }), 0.31, 0.86, -0.5);
   g.userData.gun = gun;
-  return g;
+  g.userData.tails = tails;
+  return addInkHull(g);
 }
 
 export function buildPerson(color, armor = 0) {
@@ -482,7 +509,7 @@ export function buildCreature(color, size, seed = 1, shape = 'quad', def = {}) {
     }
   }
   g.userData.legs = legs;
-  return g;
+  return animeMode ? addInkHull(g) : g;
 }
 
 // A structure from the content library's part list. '@god' colors take the shrine's god color.

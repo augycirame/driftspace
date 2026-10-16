@@ -16,6 +16,7 @@ import { ALIEN_RACES } from '/shared/content/aliens.js';
 import { DUNGEON_THEMES } from '/shared/content/dungeons.js';
 import { FX } from './fx.js';
 import { NOISE_GLSL } from './planettex.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // Tiling textures shared by every planet: fine ground detail and rippling water.
 let detail = null;
@@ -59,9 +60,9 @@ function detailTextures() {
 
 // A sky dome: horizon haze fading up to a deeper zenith, with the sun's disk.
 function skyDome(prof, sunDir, anime = false) {
-  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color(anime ? '#2a6ae8' : '#1a3a7a'), anime ? 0.55 : 0.35);
+  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color(anime ? '#1f5fe0' : '#1a3a7a'), anime ? 0.65 : 0.35);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#ffffff'), anime ? 0.25 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, time: { value: 0 } },
+    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), anime ? 0.45 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, time: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
       uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; uniform float anime; uniform float time; varying vec3 vDir;
@@ -72,14 +73,33 @@ function skyDome(prof, sunDir, anime = false) {
         vec3 c = mix(horizon, zenith, pow(h, 0.6));
         float s = max(dot(d, sunDir), 0.0);
         if (anime > 0.5) {
-          // Anime sky: a crisp sun disk and big cel-shaded cumulus clouds.
-          c += vec3(1.0, 0.97, 0.85) * (step(0.9993, s) * 2.0 + pow(s, 16.0) * 0.3);
-          vec2 uv = d.xz / (d.y + 0.25) * 1.6 + vec2(time * 0.004, 0.0);
-          float n = fbm3(vec3(uv, 3.0), 5);
-          float cloud = smoothstep(0.52, 0.56, n) * smoothstep(0.02, 0.18, d.y);
-          float shade = smoothstep(0.6, 0.66, fbm3(vec3(uv * 1.3 + 0.05, 3.0), 4));
-          vec3 cc = mix(vec3(0.78, 0.84, 0.96), vec3(1.0), shade);
+          // Anime sky, painted like a film background: a deep gradient, a crisp sun with a halo,
+          // towering cloud banks on the horizon, big sunlit cumulus and thin high streaks.
+          c = mix(horizon, zenith, smoothstep(0.0, 0.75, pow(h, 0.7)));
+          c += vec3(1.0, 0.97, 0.85) * (step(0.9993, s) * 2.0 + pow(s, 24.0) * 0.35 + step(0.985, s) * step(s, 0.9875) * 0.25);
+          float az = atan(d.z, d.x);
+          vec3 lit = vec3(1.0, 0.99, 0.96), mid = vec3(0.86, 0.88, 0.98), dark = vec3(0.66, 0.66, 0.86);
+          float toward = dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(sunDir.x, 0.0, sunDir.z))) * 0.5 + 0.5;
+          // Horizon towers.
+          float top = 0.1 + 0.32 * pow(fbm3(vec3(az * 2.2, 1.0, 9.0), 5), 1.6) * smoothstep(0.25, 0.75, fbm3(vec3(az * 0.7, 2.0, 4.0), 3));
+          float tower = step(d.y, top) * smoothstep(-0.02, 0.03, d.y);
+          float tshade = fbm3(vec3(az * 6.0, d.y * 14.0, 5.0), 4);
+          vec3 tc = mix(dark, mid, smoothstep(0.42, 0.46, tshade + (d.y / max(top, 0.01)) * 0.25));
+          tc = mix(tc, lit, smoothstep(0.62, 0.66, tshade + toward * 0.35 + (d.y / max(top, 0.01)) * 0.2));
+          c = mix(c, mix(tc, horizon, 0.25), tower);
+          // Cumulus overhead.
+          vec2 uv = d.xz / (d.y + 0.18) * 2.2 + vec2(time * 0.01, 0.0);
+          float n = fbm3(vec3(uv, 3.0), 5) + (fbm3(vec3(uv * 0.25, 1.0), 3) - 0.5) * 0.5;
+          float cloud = smoothstep(0.55, 0.58, n) * smoothstep(0.08, 0.2, d.y);
+          float body = fbm3(vec3(uv * 2.0 + 0.05, 3.0), 4) + (n - 0.55) * 1.5;
+          vec3 cc = mix(dark, mid, smoothstep(0.46, 0.5, body));
+          cc = mix(cc, lit, smoothstep(0.58, 0.62, body + toward * 0.15));
+          float edge = smoothstep(0.55, 0.58, n) - smoothstep(0.58, 0.62, n);
+          cc = mix(cc, lit, edge * 0.8);
           c = mix(c, cc, cloud);
+          // Cirrus streaks high up.
+          float cir = smoothstep(0.64, 0.74, fbm3(vec3(uv.x * 1.2 + uv.y * 0.6, uv.y * 7.0, 8.0), 4)) * smoothstep(0.3, 0.6, d.y) * (1.0 - cloud);
+          c = mix(c, vec3(1.0), cir * 0.25);
         } else {
           c += vec3(1.0, 0.95, 0.85) * (pow(s, 900.0) * 4.0 + pow(s, 12.0) * 0.25);
         }
@@ -91,6 +111,54 @@ function skyDome(prof, sunDir, anime = false) {
   m.renderOrder = -1000;
   m.frustumCulled = false;
   return m;
+}
+
+// Anime ambience: things drifting in the air around the pilot. Cherry petals on green worlds,
+// snow on ice, embers over lava and sunlit motes everywhere else.
+function driftTexture(kind) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  if (kind === 'petal') {
+    x.translate(32, 32); x.rotate(0.6);
+    x.fillStyle = '#ffc4d6';
+    x.beginPath(); x.ellipse(0, 0, 12, 22, 0, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#ff9ab8';
+    x.beginPath(); x.ellipse(0, 6, 6, 12, 0, 0, Math.PI * 2); x.fill();
+  } else {
+    const gr = x.createRadialGradient(32, 32, 0, 32, 32, 30);
+    gr.addColorStop(0, '#ffffff'); gr.addColorStop(kind === 'snow' ? 0.5 : 0.2, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function animeDrift(planet) {
+  const kind = planet.type === 'Ice' ? 'snow' : planet.type === 'Lava' ? 'ember' : (planet.starter || planet.holy || planet.type === 'Jungle' || planet.type === 'Ocean') ? 'petal' : 'mote';
+  const n = kind === 'snow' ? 500 : 260, box = 70;
+  const base = new Float32Array(n * 3), pos = new Float32Array(n * 3);
+  for (let i = 0; i < n * 3; i++) base[i] = Math.random() * box;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const color = { petal: '#ffffff', snow: '#ffffff', ember: '#ffa040', mote: '#fff2b0' }[kind];
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: driftTexture(kind), color, size: kind === 'petal' ? 0.45 : kind === 'snow' ? 0.35 : 0.22,
+    transparent: true, depthWrite: false, opacity: kind === 'mote' ? 0.7 : 0.95, blending: kind === 'ember' ? THREE.AdditiveBlending : THREE.NormalBlending }));
+  pts.frustumCulled = false;
+  const wind = { petal: [1.6, -0.6, 0.7], snow: [0.4, -1.4, 0.2], ember: [0.3, 1.2, 0.2], mote: [0.3, 0.1, 0.2] }[kind];
+  pts.userData.update = (t, cam) => {
+    for (let i = 0; i < n; i++) {
+      const j = i * 3, w = Math.sin(t * 0.8 + i) * 1.2;
+      for (let k = 0; k < 3; k++) {
+        const v = base[j + k] + wind[k] * t + (k === 0 ? w : k === 2 ? Math.cos(t * 0.7 + i) : 0);
+        const c0 = k === 0 ? cam.x : k === 1 ? cam.y : cam.z;
+        pos[j + k] = c0 + ((((v - c0) % box) + box * 1.5) % box) - box / 2;
+      }
+    }
+    geo.attributes.position.needsUpdate = true;
+  };
+  return pts;
 }
 
 const HALF_V = (VERTS - 1) / 2;
@@ -156,7 +224,7 @@ export class SurfaceView {
     this.sun = sun;
     const anime = !!this.S.gfx?.anime;
     if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime); this.root.add(this.sky); } else this.sky = null;
-    if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color('#ffffff'), 0.25), 160, 700);
+    if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), 0.45), 160, 700);
     this.root.add(new THREE.HemisphereLight(prof.sky, prof.low, 1.1));
     this.root.add(new THREE.AmbientLight('#ffffff', 0.25));
     const sunGlow = glowSprite('#fff8e0', 260, 0.9);
@@ -179,6 +247,8 @@ export class SurfaceView {
       this.root.add(liquid);
     }
     this.buildFlora(prof);
+    this.drift = anime ? animeDrift(planet) : null;
+    if (this.drift) this.root.add(this.drift);
     this.buildDeposits();
     if (planet.starter) this.buildSettlement();
     this.buildRelic();
@@ -311,9 +381,17 @@ export class SurfaceView {
     const of = (kind, list = dry) => list.filter((f) => f.kind === kind);
     const M = (opts) => new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true, ...opts });
     const trunk = M({ color: '#5a4030', roughness: 1 });
-    const leafColor = this.planet.holy ? '#6aaa4a' : this.planet.starter ? '#3aaa6a' : '#2f7a3a';
+    const anime = !!this.S.gfx?.anime;
+    const leafColor = anime ? (this.planet.holy ? '#8ad06a' : this.planet.starter ? '#4cc46a' : '#3a9a4a') : this.planet.holy ? '#6aaa4a' : this.planet.starter ? '#3aaa6a' : '#2f7a3a';
     place(new THREE.CylinderGeometry(0.25, 0.4, 5, 6), trunk, of('tree'), 2.5);
-    place(new THREE.IcosahedronGeometry(2.4, 0), M({ color: leafColor }), of('tree'), 5.8);
+    if (anime) {
+      // Anime trees: soft, puffy clusters of foliage, like a painted background.
+      const puff = (r, x, y, z) => new THREE.IcosahedronGeometry(r, 2).translate(x, y, z);
+      const crown = mergeGeometries([puff(1.9, 0, 0, 0), puff(1.4, 1.3, -0.4, 0.4), puff(1.4, -1.2, -0.3, -0.5), puff(1.3, 0.2, 1.2, -0.2), puff(1.2, -0.3, -0.6, 1.3)]);
+      place(crown, new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.9 }), of('tree'), 5.8);
+    } else {
+      place(new THREE.IcosahedronGeometry(2.4, 0), M({ color: leafColor }), of('tree'), 5.8);
+    }
     place(new THREE.CylinderGeometry(0.2, 0.3, 7, 6), trunk, of('palm'), 3.5);
     place(new THREE.ConeGeometry(2.6, 1.2, 7), M({ color: '#3a9a4a' }), of('palm'), 7.2);
     place(new THREE.DodecahedronGeometry(1.4, 0), M({ color: prof.mid, roughness: 1 }), of('rock'), 0.6, 0.7);
@@ -511,12 +589,17 @@ export class SurfaceView {
     // Keep the sun's shadow box centered on the pilot.
     this.sun.target.position.set(me.x, me.y, me.z);
     this.sun.position.set(me.x, me.y, me.z).addScaledVector(this.sunDir, 300);
-    if (this.sky) { this.sky.position.copy(this.camera.position); this.sky.material.uniforms.time.value = t; }
+    if (this.sky) { this.sky.position.copy(this.camera.position); this.sky.material.uniforms.time.value = t % 3600; }
     if (this.liquid?.material.normalMap) this.liquid.material.normalMap.offset.set(t * 0.01, t * 0.007);
     if ((this.shadowAt = (this.shadowAt || 0) - dt) <= 0 && this.S.gfx?.q.shadows) { this.shadowAt = 0.5; this.shadowize(); }
     this.selfMesh.position.set(me.x, me.y, me.z);
     this.selfMesh.rotation.y = this.yaw;
     this.selfMesh.visible = !this.firstPerson && !S.dead;
+    if (this.drift) this.drift.userData.update(t, this.camera.position);
+    const moving = Math.hypot(this.vel.x, this.vel.z);
+    for (const [i, tail] of (this.selfMesh.userData.tails || []).entries()) {
+      tail.rotation.x = -0.5 - Math.min(0.9, moving * 0.12) + Math.sin(t * 6 + i * 1.7) * (0.08 + moving * 0.02);
+    }
     if (this.beaconLight) this.beaconLight.material.opacity = 0.5 + 0.5 * Math.sin(t * 3);
     if (this.relic) for (const [i, r] of this.relic.userData.rings.entries()) r.rotation.set(t * (0.5 + i * 0.3), t * 0.4, 0);
     for (const g of this.depositMeshes.values()) g.rotation.y = t * 0.3;

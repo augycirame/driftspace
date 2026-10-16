@@ -90,12 +90,15 @@ in the browser.
 
 ### Art style
 
-The game looks like anime by default. Lit surfaces are cel-shaded into flat bands of light and
-shadow. Dark ink outlines trace silhouettes and creases, using an edge pass over depth and surface
-normals, and colors get a saturation lift. Skies have painted cumulus clouds, the space nebula is
-painted in flat tones with twinkling four-point stars, and pilots and creatures have spiky hair
-and big shining eyes. Switch to **Realistic** under Options (**O**) → Art style; the choice is
-saved in the browser.
+The game looks like anime by default:
+
+- **Cel shading.** Light falls off in one crisp edge, shadows are tinted cool blue-violet like painted cels, and a bright rim light traces silhouettes.
+- **Ink.** Bold dark outlines on everything (an edge pass over depth and surface normals), plus inked hulls around characters and creatures.
+- **Characters.** Pilots are chibi: big heads, big shining eyes with lashes and highlights, blush, spiky hair in the pilot's color with a shine band and a cowlick, a flight jacket and a scarf that streams behind them as they run. Creatures get anime eyes.
+- **Skies.** Painted like a film background: a deep blue gradient, a crisp sun with a halo, towering cloud banks on the horizon, sunlit cumulus with lavender undersides, and wispy high clouds. Trees are soft, puffy clusters.
+- **Atmosphere.** Cherry petals drift on green worlds, snow on ice worlds, embers over lava, and sunlit motes elsewhere. In space the nebula is painted in flat tones with twinkling four-point stars, and speed lines streak past near top speed. A soft vignette frames everything.
+
+Switch to **Realistic** under Options (**O**) → Art style; the choice is saved in the browser.
 
 ## The content library (`shared/content/`)
 
