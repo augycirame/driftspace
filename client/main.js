@@ -14,6 +14,7 @@ import { Shipyard } from './shipyard.js';
 import { GalaxyMap } from './map.js';
 import { UI } from './ui.js';
 import { buildPerson, setAnimeMode } from './meshes.js';
+import { loadPeople } from './people.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -36,6 +37,8 @@ const canvas = $('game');
 const gfx = new Graphics(canvas);
 S.gfx = gfx;
 setAnimeMode(gfx.anime && gfx.style);
+// Realistic people come from a model: start fetching it right away.
+if (!gfx.anime) loadPeople().catch(() => {});
 const space = new SpaceView(S);
 const surface = new SurfaceView(S);
 const dungeon = new DungeonView(S);

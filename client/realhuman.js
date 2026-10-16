@@ -275,9 +275,10 @@ function subsurface(mat) {
   mat.onBeforeCompile = (sh, r) => {
     prev?.(sh, r);
     sh.fragmentShader = sh.fragmentShader.replace('#include <lights_physical_pars_fragment>', THREE.ShaderChunk.lights_physical_pars_fragment.replace(
-      'vec3 irradiance = dotNL * directLight.color;',
+      'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );',
       `float nlRaw = dot( geometryNormal, directLight.direction );
-      vec3 irradiance = ( saturate( ( nlRaw + 0.4 ) / 1.4 ) * vec3( 1.0, 0.78, 0.7 ) * ( 1.0 - dotNL ) + dotNL ) * directLight.color;`));
+      vec3 wrapIrr = ( saturate( ( nlRaw + 0.4 ) / 1.4 ) * vec3( 1.0, 0.78, 0.7 ) * ( 1.0 - dotNL ) + dotNL ) * directLight.color;
+      reflectedLight.directDiffuse += wrapIrr * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );`));
   };
   const key = mat.customProgramCacheKey.bind(mat);
   mat.customProgramCacheKey = () => key() + '-sss';

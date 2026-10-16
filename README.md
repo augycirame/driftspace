@@ -92,7 +92,18 @@ in the browser.
 
 Three styles, switched under Options (**O**) → Art style and saved in the browser:
 
-- **Anime** (default): a grounded, painted look like a seinen anime series. Natural, slightly
+- **Realistic** (default): physically based lighting from a real sky (Rayleigh and Mie
+  scattering, a cloud layer that follows the weather, stars and a moon at night), soft shadows,
+  film-like tone mapping and grain. Terrain has cliffs, shore sand, snow and wet ground with
+  scanned (CC0) surface detail; wind-blown grass, leafy trees and reflective water. People are
+  real, rigged human bodies (from MakeHuman's CC0 assets, see `tools/people/`): men and women
+  of every build, age and ethnicity, elves with pointed ears and stocky dwarves, with real eyes
+  and hair, walking and gripping their weapons. Pilots wear a flight suit with harness, belt
+  pouches, gloves, boots and knee pads, rifle at the ready; natives wear tunics, robes, cloaks,
+  helmets and crowns. Ships are panelled hulls with rivets, chipped paint and grime, a glass
+  canopy, glowing bell nozzles, swept wings with navigation lights and cannons. In space: a Milky
+  Way with dust lanes, countless faint stars, and reflections on hulls.
+- **Anime**: a grounded, painted look like a seinen anime series. Natural, slightly
   warm colors; fine sepia ink lines; one crisp, soft-toned light/shadow edge. Surfaces are
   painted with tonal patches and brush mottling. Masonry (temples, shrines, ruins, dungeon walls,
   boulders) gets hand-drawn stonework: irregular stones with mortar lines. Skies are soft and
@@ -104,7 +115,6 @@ Three styles, switched under Options (**O**) → Art style and saved in the brow
   light; big-headed chibi pilots with huge shining eyes, spiky hair, a shine band and a
   streaming scarf; anime-eyed creatures; film-style skies with towering clouds and cherry
   petals drifting on green worlds.
-- **Realistic**: smooth lighting and natural colors.
 
 Both anime styles add drifting snow on ice worlds, embers over lava and sunlit motes elsewhere,
 a painted nebula with twinkling four-point stars in space, and speed lines near top speed.

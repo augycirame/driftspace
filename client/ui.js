@@ -403,7 +403,7 @@ export class UI {
       const styles = {
         anime: ['Anime', 'Grounded, painted anime: natural colors, fine sepia linework, hand-drawn stone and soft painted skies.'],
         chibi: ['Chibi', 'Bright and cute: bold ink, punchy colors, big-eyed chibi pilots and drifting petals.'],
-        realistic: ['Realistic', 'Smooth lighting and natural colors.'],
+        realistic: ['Realistic', 'Physically based light, real skies, detailed people and ships.'],
       };
       for (const [id, [name, text]] of Object.entries(styles)) {
         const b = this.button(id === gfx.style ? `${name} ✓` : name, () => { gfx.setStyle(id); this.rerender(); }, id === gfx.style ? '' : 'alt');

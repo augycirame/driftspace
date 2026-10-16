@@ -36,7 +36,7 @@ const CinemaShader = {
     }`,
 };
 // Realistic exposure and glow by kind of scene.
-const REAL = { surface: { exposure: 0.66, bloom: [0.2, 0.5, 2.6] }, space: { exposure: 0.85, bloom: [0.4, 0.6, 1.4] }, dungeon: { exposure: 1.05, bloom: [0.5, 0.55, 0.7] } };
+const REAL = { surface: { exposure: 0.66, bloom: [0.14, 0.45, 5] }, space: { exposure: 0.85, bloom: [0.4, 0.6, 1.4] }, dungeon: { exposure: 1.05, bloom: [0.5, 0.55, 0.7] } };
 // Ink line weight per kind of scene, and the look of each cel-shaded style. Anime is the grounded,
 // painted look of a seinen series: thin sepia lines, natural colors, a gentle warm grade. Chibi is
 // bright and cute: bold black lines and punchy colors.

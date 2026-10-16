@@ -5,6 +5,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 import { WebSocketServer } from 'ws';
 import { World } from './world.js';
 
@@ -13,7 +14,10 @@ const PORT = Number(process.env.PORT) || 8080;
 const DATA_FILE = process.env.DATA_FILE || path.join(ROOT, 'data', 'world.json');
 const SEED = Number(process.env.SEED) || 1337;
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.glb': 'model/gltf-binary', '.json': 'application/json' };
+// Text and models shrink a lot when gzipped (the people model by two thirds); cached per file version.
+const GZIP = new Set(['.html', '.js', '.css', '.svg', '.glb', '.json']);
+const gzipped = new Map();
 
 function serveStatic(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -26,10 +30,22 @@ function serveStatic(req, res) {
   if (rel === '/') rel = '/index.html';
   const file = path.resolve(base, '.' + rel);
   if (!file.startsWith(base + path.sep)) { res.writeHead(403).end(); return; }
-  fs.readFile(file, (err, buf) => {
-    if (err) { res.writeHead(404).end('Not found'); return; }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-    res.end(buf);
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404).end('Not found'); return; }
+    const ext = path.extname(file);
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-cache' };
+    const gz = GZIP.has(ext) && /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+    const key = `${file}|${st.mtimeMs}`;
+    if (gz && gzipped.has(key)) { res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' }).end(gzipped.get(key)); return; }
+    fs.readFile(file, (err2, buf) => {
+      if (err2) { res.writeHead(404).end('Not found'); return; }
+      if (!gz) { res.writeHead(200, headers).end(buf); return; }
+      zlib.gzip(buf, (err3, out) => {
+        if (err3) { res.writeHead(200, headers).end(buf); return; }
+        gzipped.set(key, out);
+        res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' }).end(out);
+      });
+    });
   });
 }
 

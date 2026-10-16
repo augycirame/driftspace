@@ -5,6 +5,7 @@ import { addInkHull as inkHull } from './toon.js';
 import { realism, realSurface } from './realism.js';
 import { buildRealShip } from './realship.js';
 import { buildRealHuman } from './realhuman.js';
+import { buildModelPerson, loadPeople, peopleReady, lookFrom } from './people.js';
 import { SHIP_PARTS, SHIP_BLOCK } from '/shared/rules.js';
 import { mulberry32 } from '/shared/rng.js';
 import { PEOPLES } from '/shared/content/peoples.js';
@@ -267,7 +268,19 @@ function pick(list, key, salt = 0) {
 //   opts: tunic, skin, hair, eyes, armor, female, ears (elf), beard, height, width (dwarf),
 //         robe, cloak, role gear (crown, helmet, spear, staff, hammer, bow, hat, apron, lute).
 export function buildHuman(opts) {
-  if (realism()) return buildRealHuman(opts);
+  if (realism()) {
+    const o = { armor: 0, height: 1, width: 1, ...opts };
+    const female = !!o.female;
+    const dwarf = o.width > 1.1;
+    return modelOr({
+      female, skin: o.skin, hair: o.hair, eyes: o.eyes, hairStyle: female ? 'bun' : 'crop', beard: o.beard, stubble: female ? 0 : 0.3, robe: o.robe,
+      top: o.tunic, pants: o.robe ? o.tunic : o.pants || '#3a3236', boots: o.boots || '#4a3a2a', gloves: '#3a2e26', gloved: !!o.helmet, sleeve: o.robe ? 0.79 : 0.42,
+      pantLen: 0.86, bootTop: 0.68, skirt: o.robe ? 0.95 : 0.3, cloak: o.cloak, fur: o.fur, apron: o.apron, armor: o.armor, helmet: o.helmet, plume: o.plume,
+      crown: o.crown, hat: o.hat, spear: o.spear, shield: o.shield, staff: o.staff, hammer: o.hammer, bow: o.bow, lute: o.lute,
+      height: o.height * (dwarf ? 0.95 : 1), width: dwarf ? 1.25 : 1,
+      build: { elf: o.ears ? 1 : 0, heavy: dwarf ? 0.9 : 0, muscle: dwarf ? 0.9 : 0.2, thin: o.ears ? 0.4 : 0, old: o.crown ? 0.4 : 0 },
+    }, () => buildRealHuman(opts));
+  }
   const o = { armor: 0, female: false, ears: false, beard: false, height: 1, width: 1, gun: true, ...opts };
   const g = new THREE.Group();
   const body = new THREE.Group();
@@ -557,13 +570,43 @@ function buildChibiPerson(color, armor) {
 
 // The realistic pilot: a worn flight suit in the pilot's color, harness, boots and a sidearm.
 const SKIN = ['#e8c4a8', '#d8a888', '#c08a68', '#9a6a4a', '#6a4a36', '#f0d0b8'];
+// A person from the realistic model, or the hand-built one while the model is still loading
+// (swapped for the real thing as soon as it arrives).
+function modelOr(opts, fallback) {
+  if (peopleReady()) return buildModelPerson(opts) || fallback();
+  const wrap = new THREE.Group();
+  let cur = fallback();
+  wrap.add(cur);
+  wrap.userData.animate = (t, m) => cur.userData.animate?.(t, m);
+  wrap.userData.gun = cur.userData.gun;
+  loadPeople().then(() => {
+    const real = buildModelPerson(opts);
+    if (!real) return;
+    wrap.remove(cur);
+    cur = real;
+    wrap.add(real);
+    wrap.userData.gun = real.userData.gun;
+  }).catch(() => {});
+  return wrap;
+}
+
 function buildRealPerson(color, armor) {
   const suit = new THREE.Color(color);
   const hsl = {}; suit.getHSL(hsl);
   suit.setHSL(hsl.h, Math.min(hsl.s, 0.35), 0.32);
+  const female = pick([0, 1], color, 11) === 1;
+  const look = lookFrom(Array.from(String(color)).reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619), 2166136261));
+  return modelOr({
+    female, skin: look.skin, hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), hairStyle: female ? 'bun' : 'crop', build: look.build, stubble: female ? 0 : 0.35,
+    top: suit, pants: suit, boots: '#2a2622', gloves: '#24221f', gloved: true, suit: true, strap: '#2c2c28', sleeve: 0.79, pantLen: 0.86, bootTop: 0.62, gun: true, armor,
+    height: female ? 1.0 : 1.03,
+  }, () => buildRealHumanPilot(suit, color, armor, female));
+}
+
+function buildRealHumanPilot(suit, color, armor, female) {
   return buildRealHuman({
     pilot: true, tunic: suit, pants: suit, boots: '#2a2622', webbing: '#2c2c28', patch: color,
-    skin: pick(SKIN, color, 3), hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), armor, female: pick([0, 1], color, 11) === 1,
+    skin: pick(SKIN, color, 3), hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), armor, female,
   });
 }
 
