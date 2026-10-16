@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
+    "@pmndrs/assets": "^1.7.0",
     "three": "^0.186.1",
     "ws": "^8.22.0"
   }

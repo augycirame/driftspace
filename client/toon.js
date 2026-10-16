@@ -158,6 +158,7 @@ export function setHullStyle(ink, width) {
   const m = inkHullMaterial();
   m.uniforms.ink.value.set(ink);
   m.uniforms.width.value = width;
+  m.visible = width > 0;
 }
 
 export function addInkHull(group) {

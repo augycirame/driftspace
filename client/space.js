@@ -9,6 +9,7 @@ import { buildShip, buildNpc, buildStation, glowSprite, label, healthBar, setHea
 import { FX } from './fx.js';
 import { ALIEN_RACES } from '/shared/content/aliens.js';
 import { planetTextures, atmosphereMaterial, nebulaSky } from './planettex.js';
+import { realism, realSurface } from './realism.js';
 import { Lensflare, LensflareElement } from 'three/addons/objects/Lensflare.js';
 
 // Lens-flare sprites, drawn once.
@@ -71,9 +72,10 @@ export class SpaceView {
 
     this.sky = nebulaSky();
     this.scene.add(this.sky);
-    this.scene.add(new THREE.AmbientLight('#8090b0', 0.35));
-    const hemi = new THREE.HemisphereLight('#9fb8ff', '#1a1020', 0.35);
-    this.scene.add(hemi);
+    this.ambient = new THREE.AmbientLight('#8090b0', 0.35);
+    this.scene.add(this.ambient);
+    this.hemi = new THREE.HemisphereLight('#9fb8ff', '#1a1020', 0.35);
+    this.scene.add(this.hemi);
 
     // Distant starfield that travels with the camera.
     const n = 4000, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
@@ -154,6 +156,22 @@ export class SpaceView {
     u.colB.value.setHSL(((region.hue + 70) % 360) / 360, 0.6, 0.12 + region.density * 0.1);
     u.seed.value = (Math.floor(sx / 12) * 7.31 + Math.floor(sz / 12) * 3.17) % 50;
     this.updateFarStars(sx, sz);
+    this.updateEnvironment();
+  }
+
+  // Realistic: ships and stations reflect the galaxy around them.
+  updateEnvironment() {
+    const gfx = this.S.gfx;
+    if (!gfx || gfx.anime) { this.scene.environment = null; return; }
+    this.sky.material.uniforms.real.value = 1;
+    this.envGen ||= new THREE.PMREMGenerator(gfx.renderer);
+    const sc = new THREE.Scene();
+    sc.add(new THREE.Mesh(this.sky.geometry, this.sky.material));
+    const rt = this.envGen.fromScene(sc, 0.04, 1, 100000);
+    this.envRT?.dispose();
+    this.envRT = rt;
+    this.scene.environment = rt.texture;
+    this.scene.environmentIntensity = 3;
   }
 
   updateFarStars(sx, sz) {
@@ -198,7 +216,7 @@ export class SpaceView {
         const glow = glowSprite(st.color, st.r * (anime ? 4 : 6), anime ? 0.2 : 0.4);
         glow.position.copy(sun.position);
         group.add(glow);
-        const light = new THREE.PointLight(st.color, 2.6, 0, 0);
+        const light = new THREE.PointLight(st.color, this.S.gfx?.anime === false ? 1.7 : 2.6, 0, 0);
         light.position.copy(sun.position);
         group.add(light);
         const corona = glowSprite(new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.3), st.r * 1.9, anime ? 0.4 : 0.6);
@@ -246,7 +264,7 @@ export class SpaceView {
     const astMat = {};
     for (const a of s.asteroids) {
       const ore = effectiveOre(a, this.S.effects);
-      astMat[ore] ||= new THREE.MeshStandardMaterial({ color: '#4a4844', roughness: 0.95, flatShading: true, emissive: ORES[ore].color, emissiveIntensity: 0.18 });
+      astMat[ore] ||= realSurface(new THREE.MeshStandardMaterial({ color: '#4a4844', roughness: 0.95, flatShading: true, emissive: ORES[ore].color, emissiveIntensity: realism() ? 0.06 : 0.18 }), { normal: 'rock', scale: 0.9, strength: 1.3, dirt: 0.35, local: true });
       const mesh = new THREE.Mesh(asteroidGeometry(a), astMat[ore]);
       mesh.position.set(a.x, a.y, a.z);
       mesh.scale.setScalar(a.r);
@@ -297,7 +315,7 @@ export class SpaceView {
     }
 
     for (const nb of s.nebulae) {
-      const sp = glowSprite(new THREE.Color().setHSL(nb.hue / 360, 0.7, 0.5), nb.r * 2.2, nb.a * 0.8);
+      const sp = glowSprite(new THREE.Color().setHSL(nb.hue / 360, 0.7, 0.5), nb.r * 2.2, nb.a * (this.S.gfx?.anime === false ? 0.05 : 0.8));
       sp.position.set(nb.x, nb.y, nb.z);
       group.add(sp);
     }
@@ -451,7 +469,12 @@ export class SpaceView {
     this.sky.position.copy(this.camera.position);
     const anime = !!this.S.gfx?.anime;
     this.sky.material.uniforms.anime.value = anime ? 1 : 0;
+    this.sky.material.uniforms.real.value = anime ? 0 : 1;
     this.sparkles.visible = anime;
+    // Space has no air to scatter light: realistic shadows are near black, starlight is harsh.
+    this.ambient.intensity = anime ? 0.35 : 0.03;
+    this.hemi.intensity = anime ? 0.35 : 0.06;
+    this.starfield.material.size = anime ? 1.6 : 1.1;
     if (anime) {
       this.sparkles.position.copy(this.camera.position);
       this.sparkles.material.size = 12 + Math.sin(t * 2.3) * 3;

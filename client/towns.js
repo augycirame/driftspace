@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { heightAt } from '/shared/planet.js';
 import { hashString } from '/shared/rng.js';
+import { realism, realSurface } from './realism.js';
 
 export const realmColor = (realmId) => `hsl(${hashString(realmId) % 360}, 55%, 42%)`;
 
@@ -18,10 +19,22 @@ const MATS = {
   glow: ['#ffd890', { glow: 0.7 }], redglow: ['#ff4a4a', { glow: 0.6 }], blueglow: ['#bfeaff', { glow: 0.9 }], ember: ['#ff8a3a', { glow: 1 }],
 };
 
+// What each material looks like up close in the realistic style: [normal map, scale, strength, weathering].
+const REAL = {
+  stone: ['cobble', 0.32, 1.2, 0.3], darkstone: ['cobble', 0.32, 1.2, 0.3], dwarfstone: ['rock', 0.25, 1.2, 0.3], whitestone: ['plaster', 0.4, 0.6, 0.18],
+  plaster: ['plaster', 0.5, 0.8, 0.25], timber: ['wood', 0.6, 1, 0.25], wood: ['planks', 0.4, 1, 0.22], logs: ['bark', 0.5, 1.2, 0.25],
+  thatch: ['bark', 1.4, 1.3, 0.35], slate: ['tiles', 0.45, 1, 0.2], teal: ['tiles', 0.45, 0.9, 0.2], gold: ['scratched', 1, 0.5, 0.1],
+  bronze: ['scratched', 1, 0.6, 0.15], iron: ['scratched', 1, 0.7, 0.2], turf: ['ground', 0.4, 1, 0.3], fur: ['fabric', 2, 1, 0.2],
+  bone: ['cracked', 0.8, 0.7, 0.2], soil: ['mud', 0.3, 1, 0.3], crop: ['ground', 0.6, 1, 0.3], cloth: ['fabric', 1.5, 0.8, 0.18],
+};
+
 function material(key, color) {
   const [c, o] = MATS[key] || [color, {}];
-  const m = new THREE.MeshStandardMaterial({ color: color || c, roughness: o.metal ? 0.45 : 0.9, metalness: o.metal ? 0.4 : 0, flatShading: !!o.stone, emissive: o.glow ? c : '#000000', emissiveIntensity: o.glow || 0 });
+  const real = realism();
+  const m = new THREE.MeshStandardMaterial({ color: color || c, roughness: o.metal ? 0.45 : 0.9, metalness: o.metal ? (real ? 0.85 : 0.4) : 0, flatShading: !!o.stone && !real, emissive: o.glow ? c : '#000000', emissiveIntensity: (o.glow || 0) * (real ? 2 : 1) });
   if (o.stone) m.userData.stone = o.stone;
+  const r = real && !o.glow && (REAL[key] || ['fabric', 1, 0.8, 0.18]);
+  if (r) realSurface(m, { normal: r[0], scale: r[1], strength: r[2], dirt: r[3] });
   return m;
 }
 

@@ -139,11 +139,11 @@ export function atmosphereMaterial(color, strength = 1) {
 // The space sky: drifting nebula clouds in the region's colors and a bright galactic band.
 export function nebulaSky() {
   const mat = new THREE.ShaderMaterial({
-    uniforms: { colA: { value: new THREE.Color('#203060') }, colB: { value: new THREE.Color('#602050') }, seed: { value: 0 }, bright: { value: 1 }, anime: { value: 0 } },
+    uniforms: { colA: { value: new THREE.Color('#203060') }, colB: { value: new THREE.Color('#602050') }, seed: { value: 0 }, bright: { value: 1 }, anime: { value: 0 }, real: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
       precision highp float;
-      uniform vec3 colA; uniform vec3 colB; uniform float seed; uniform float bright; uniform float anime;
+      uniform vec3 colA; uniform vec3 colB; uniform float seed; uniform float bright; uniform float anime; uniform float real;
       varying vec3 vDir;
       ${NOISE_GLSL}
       void main() {
@@ -159,6 +159,32 @@ export function nebulaSky() {
         c += vec3(0.55, 0.6, 0.75) * band * 0.06 * (0.6 + n);
         float dust = smoothstep(0.62, 0.75, fbm3(p * 3.0 + 7.0, 4)) * band;
         c -= dust * 0.05;
+        // Realistic: faint nebulae, the Milky Way as a glow of unresolved stars split by dark dust
+        // lanes, and countless faint stars of every color.
+        if (real > 0.5) {
+          c = max(c, 0.0) * 0.07;
+          vec3 gal = normalize(vec3(0.25, 0.92, 0.3));
+          float gd = dot(d, gal) + (w - 0.5) * 0.12;
+          float mw = exp(-gd * gd * 22.0);
+          float core = exp(-pow(length(d - normalize(vec3(0.9, -0.2, 0.4))), 2.0) * 3.0);
+          float grain = fbm3(d * 60.0 + seed, 3);
+          float clump = fbm3(d * 7.0 + seed * 0.7, 5);
+          vec3 mwc = mix(vec3(0.62, 0.66, 0.8), vec3(0.95, 0.82, 0.62), core) * (0.012 + 0.03 * core) * (0.45 + clump * 0.8 + grain * 0.4);
+          float lane = smoothstep(0.5, 0.7, fbm3(d * 11.0 + vec3(seed * 1.3), 5)) * smoothstep(0.0, 0.06, 0.12 - abs(gd));
+          c += mwc * mw * (1.0 - lane * 0.9);
+          vec3 q = d * 700.0;
+          vec3 cell = floor(q);
+          float h = hash3(cell);
+          float density = 0.993 - mw * 0.02;
+          if (h > density) {
+            vec3 sp = cell + vec3(hash3(cell + 1.7), hash3(cell + 3.1), hash3(cell + 5.3));
+            float r = length(q - sp);
+            float mag = pow((h - density) / (1.0 - density), 3.0);
+            float t = hash3(cell + 9.1);
+            vec3 sc = t < 0.15 ? vec3(1.0, 0.75, 0.55) : t < 0.35 ? vec3(1.0, 0.92, 0.8) : t < 0.8 ? vec3(0.95, 0.97, 1.0) : vec3(0.7, 0.8, 1.0);
+            c += sc * exp(-r * r * 9.0) * (0.03 + mag * 1.6);
+          }
+        }
         gl_FragColor = vec4(max(c, 0.0) * bright, 1.0);
       }`,
     side: THREE.BackSide, depthTest: false, depthWrite: false,

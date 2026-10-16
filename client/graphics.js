@@ -6,9 +6,37 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { InkPass, stylize, setToonStyle, setHullStyle } from './toon.js';
+import { setRealism } from './realism.js';
 
-export const STYLES = { anime: 'Anime', chibi: 'Chibi', realistic: 'Realistic' };
+export const STYLES = { realistic: 'Realistic', anime: 'Anime', chibi: 'Chibi' };
+
+// The camera: a gentle vignette, fine film grain, a touch of lens fringing at the edges and a
+// filmic contrast curve, applied in linear light before tone mapping.
+const CinemaShader = {
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, vignette: { value: 0.28 }, grain: { value: 0.025 }, fringe: { value: 0.0006 }, contrast: { value: 1.1 }, saturation: { value: 1.14 }, aspect: { value: 1 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float time; uniform float vignette; uniform float grain; uniform float fringe; uniform float contrast; uniform float saturation; uniform float aspect;
+    varying vec2 vUv;
+    float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main() {
+      vec2 c = vUv - 0.5;
+      float r2 = dot(c * vec2(aspect, 1.0), c * vec2(aspect, 1.0));
+      vec2 off = c * fringe * r2 * 8.0;
+      vec3 col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
+      float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col = mix(vec3(lum), col, saturation);
+      col = lum > 0.0 ? col * pow(max(lum, 1e-4), contrast - 1.0) : col;
+      col *= 1.0 - vignette * smoothstep(0.15, 0.85, r2 * 1.6);
+      // Film grain, in proportion to the light (this runs before tone mapping, which lifts the darks).
+      col *= 1.0 + (h(vUv * 1000.0 + fract(time) * 37.0) - 0.5) * grain * 3.0;
+      gl_FragColor = vec4(max(col, 0.0), 1.0);
+    }`,
+};
+// Realistic exposure and glow by kind of scene.
+const REAL = { surface: { exposure: 0.66, bloom: [0.2, 0.5, 2.6] }, space: { exposure: 0.85, bloom: [0.4, 0.6, 1.4] }, dungeon: { exposure: 1.05, bloom: [0.5, 0.55, 0.7] } };
 // Ink line weight per kind of scene, and the look of each cel-shaded style. Anime is the grounded,
 // painted look of a seinen series: thin sepia lines, natural colors, a gentle warm grade. Chibi is
 // bright and cute: bold black lines and punchy colors.
@@ -44,8 +72,11 @@ export class Graphics {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.level = readSetting();
-    try { this.style = STYLES[localStorage.getItem('ds_style')] ? localStorage.getItem('ds_style') : 'anime'; } catch { this.style = 'anime'; }
+    // Realistic is the default; a saved choice (from Options) wins.
+    try { this.style = STYLES[localStorage.getItem('ds_style2')] ? localStorage.getItem('ds_style2') : 'realistic'; } catch { this.style = 'realistic'; }
+    setRealism(this.style === 'realistic');
     this.scenes = new Set();
     this.frame = 0;
     this.listeners = [];
@@ -67,7 +98,8 @@ export class Graphics {
   setStyle(style) {
     if (!STYLES[style]) return;
     this.style = style;
-    try { localStorage.setItem('ds_style', style); } catch {}
+    try { localStorage.setItem('ds_style2', style); } catch {}
+    setRealism(style === 'realistic');
     for (const sc of this.scenes) stylize(sc, style !== 'realistic');
     this.apply();
     for (const fn of this.listeners) fn(this.q);
@@ -81,10 +113,12 @@ export class Graphics {
     const q = this.q;
     this.renderer.setPixelRatio(Math.max(0.5, Math.min(2.5, Math.min(window.devicePixelRatio || 1, 1.5) * q.scale)));
     this.renderer.shadowMap.enabled = q.shadows > 0;
+    // Soft, physically plausible shadow edges in the realistic style.
+    this.renderer.shadowMap.type = this.anime ? THREE.PCFShadowMap : THREE.VSMShadowMap;
     this.renderer.shadowMap.needsUpdate = true;
-    this.renderer.toneMapping = this.anime ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = this.anime ? this.look.exposure : 1.05;
-    if (this.anime) { setToonStyle(this.style); setHullStyle(...this.look.hull); }
+    this.renderer.toneMapping = this.anime ? THREE.NeutralToneMapping : THREE.AgXToneMapping;
+    this.renderer.toneMappingExposure = this.anime ? this.look.exposure : REAL.surface.exposure;
+    if (this.anime) { setToonStyle(this.style); setHullStyle(...this.look.hull); } else setHullStyle('#000000', 0);
     this.composer?.dispose?.();
     this.composer = null;
     this.resize();
@@ -101,12 +135,16 @@ export class Graphics {
     this.scenes.add(scene);
     if (anime && (++this.frame % 6 === 0 || scene !== this.lastScene)) stylize(scene, true);
     this.lastScene = scene;
-    if (!q.bloom && !anime) {
+    const real = !anime;
+    if (real) this.renderer.toneMappingExposure = REAL[kind].exposure * (kind === 'surface' ? this.exposureK || 1 : 1);
+    if (!q.bloom && !anime && q.scale < 1) {
       this.renderer.render(scene, camera);
       return;
     }
     if (!this.composer) {
-      this.composer = new EffectComposer(this.renderer);
+      // Realistic: render into a multisampled HDR target so edges are smooth.
+      const rt = real ? new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: q.scale >= 1 ? 4 : 0 }) : undefined;
+      this.composer = new EffectComposer(this.renderer, rt);
       this.composer.setPixelRatio(this.renderer.getPixelRatio());
       this.renderPass = new RenderPass(scene, camera);
       this.composer.addPass(this.renderPass);
@@ -114,6 +152,8 @@ export class Graphics {
       if (this.ink) this.composer.addPass(this.ink);
       this.bloom = q.bloom ? new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1, 0.5, 0.6) : null;
       if (this.bloom) this.composer.addPass(this.bloom);
+      this.cinema = real ? new ShaderPass(CinemaShader) : null;
+      if (this.cinema) this.composer.addPass(this.cinema);
       this.composer.addPass(new OutputPass());
       this.composer.setSize(innerWidth, innerHeight);
     }
@@ -137,9 +177,16 @@ export class Graphics {
     }
     if (this.bloom) {
       const [strength, radius, threshold] = BLOOM[kind];
-      this.bloom.strength = strength * (anime ? (kind === 'space' ? 0.7 : 1.05) : 1);
-      this.bloom.radius = radius;
-      this.bloom.threshold = threshold;
+      const rb = real ? REAL[kind].bloom : null;
+      this.bloom.strength = real ? rb[0] : strength * (kind === 'space' ? 0.7 : 1.05);
+      this.bloom.radius = real ? rb[1] : radius;
+      this.bloom.threshold = real ? rb[2] : threshold;
+    }
+    if (this.cinema) {
+      const u = this.cinema.uniforms;
+      u.time.value = performance.now() / 1000;
+      u.aspect.value = innerWidth / innerHeight;
+      u.vignette.value = kind === 'space' ? 0.35 : 0.26;
     }
     this.composer.render();
   }

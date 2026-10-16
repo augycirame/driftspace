@@ -20,6 +20,7 @@ function serveStatic(req, res) {
   let rel = decodeURIComponent(url.pathname);
   let base = path.join(ROOT, 'client');
   if (rel.startsWith('/shared/')) { base = path.join(ROOT, 'shared'); rel = rel.slice('/shared'.length); }
+  else if (rel.startsWith('/cc0/')) { base = path.join(ROOT, 'node_modules', '@pmndrs', 'assets'); rel = rel.slice('/cc0'.length); }
   else if (rel.startsWith('/vendor/addons/')) { base = path.join(ROOT, 'node_modules', 'three', 'examples', 'jsm'); rel = rel.slice('/vendor/addons'.length); }
   else if (rel.startsWith('/vendor/')) { base = path.join(ROOT, 'node_modules', 'three', 'build'); rel = rel.slice('/vendor'.length); }
   if (rel === '/') rel = '/index.html';

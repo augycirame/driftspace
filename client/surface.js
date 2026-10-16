@@ -12,6 +12,8 @@ import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, bui
 import { townsOf, townFootprints, insideFootprint, sunAt, weatherAt, weatherInfo } from '/shared/towns.js';
 import { buildTown, realmColor } from './towns.js';
 import { gravityOf } from '/shared/planet.js';
+import { realism, physicalSky, skyColors, SkyEnvironment, terrainMaterial, waterMaterial, GrassField, treeModels, treeMaterials, rockGeometry, realSurface, realBlock } from './realism.js';
+import { climateOf } from '/shared/towns.js';
 import { CREATURES } from '/shared/content/creatures.js';
 import { STRUCTURES } from '/shared/content/structures.js';
 import { GODS } from '/shared/content/factions.js';
@@ -203,6 +205,7 @@ function blockMat(id) {
       emissive: d.glow ? d.color : '#000000', emissiveIntensity: d.glow ? 0.8 : 0,
     });
     if (d.stone) blockMats[id].userData.stone = 2.2;
+    realBlock(blockMats[id], id);
   }
   return blockMats[id];
 }
@@ -256,14 +259,36 @@ export class SurfaceView {
     this.sun = sun;
     const anime = !!this.S.gfx?.anime;
     const soft = this.S.gfx?.style === 'anime';
-    if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime, soft); this.root.add(this.sky); } else this.sky = null;
+    this.realSky = null;
+    const real = realism();
+    if (real) {
+      // A physically based sky, which also lights the scene through image-based lighting.
+      const climate = climateOf(planet);
+      const earthLike = planet.starter || planet.holy || prof.tags.some((t) => ['temperate', 'forest', 'water'].includes(t));
+      this.turbidity = climate === 'arid' || climate === 'scorching' ? 7 : climate === 'humid' ? 5 : 3.2;
+      this.realSky = physicalSky({ skyColor: prof.sky, earthLike, turbidity: this.turbidity });
+      this.sky = this.realSky;
+      this.root.add(this.sky);
+      sc.fog = new THREE.FogExp2('#b8c8d8', 0.0012);
+      this.env = this.S.gfx ? new SkyEnvironment(this.S.gfx.renderer) : null;
+      this.env?.setSky(this.realSky);
+      sun.intensity = 9;
+      if (q.shadows) {
+        sun.shadow.radius = 5;
+        sun.shadow.blurSamples = 12;
+        sun.shadow.bias = -0.0004;
+        sun.shadow.normalBias = 0.35;
+      }
+    } else if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime, soft); this.root.add(this.sky); } else this.sky = null;
     if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color(soft ? '#dfeaf2' : '#e8f6ff'), 0.45), 160, 700);
     this.hemi = new THREE.HemisphereLight(prof.sky, prof.low, 1.1);
     this.ambient = new THREE.AmbientLight('#ffffff', 0.25);
     this.moon = new THREE.DirectionalLight('#9ab8ff', 0);
     this.root.add(this.hemi, this.ambient, this.moon, this.moon.target);
     this.sunGlow = glowSprite('#fff8e0', 260, 0.9);
+    this.sunGlow.visible = !real;
     this.root.add(this.sunGlow);
+    if (real) { this.hemi.intensity = 0.15; this.ambient.intensity = 0; }
     this.fogColor = sc.fog.color.clone();
     this.fogFar = sc.fog.far;
     this.baseSky = sc.background.clone();
@@ -271,7 +296,16 @@ export class SurfaceView {
     this.flashT = 0;
 
     this.buildTerrain(prof);
-    if (prof.water != null) {
+    if (prof.water != null && real) {
+      const geo = new THREE.PlaneGeometry(SURFACE_HALF * 2.4, SURFACE_HALF * 2.4, 1, 1).rotateX(-Math.PI / 2);
+      const uv = geo.attributes.uv;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 90, uv.getY(i) * 90);
+      const liquid = new THREE.Mesh(geo, waterMaterial(prof.liquid, planet.type === 'Lava'));
+      liquid.position.y = prof.water;
+      liquid.userData.noCast = true;
+      this.liquid = liquid;
+      this.root.add(liquid);
+    } else if (prof.water != null) {
       const waterNormal = detailTextures().normal.clone();
       waterNormal.repeat.set(60, 60);
       waterNormal.needsUpdate = true;
@@ -286,6 +320,15 @@ export class SurfaceView {
       this.root.add(liquid);
     }
     this.buildFlora(prof);
+    this.grass = null;
+    const grassy = prof.tags.some((t) => ['temperate', 'forest', 'holy', 'water'].includes(t)) || planet.starter;
+    const dryGrass = !grassy && prof.tags.includes('sand') && !prof.tags.includes('salt');
+    if (real && (q.flora || 0) >= 1 && (grassy || dryGrass)) {
+      const n = dryGrass ? 0.25 : 1;
+      this.grass = new GrassField({ count: Math.round((q.flora >= 2 ? 170000 : q.flora >= 1.5 ? 110000 : 60000) * n), radius: q.flora >= 2 ? 48 : q.flora >= 1.5 ? 40 : 32, half: SURFACE_HALF, verts: VERTS, cell: CELL, water: prof.water, dry: dryGrass });
+      this.grass.syncTerrain(this.terrainGeo);
+      this.root.add(this.grass.mesh);
+    }
     this.drift = anime ? animeDrift(planet, this.S.gfx.style) : null;
     if (this.drift) this.root.add(this.drift);
     this.buildDeposits();
@@ -318,6 +361,8 @@ export class SurfaceView {
     this.root = null;
     for (const m of [this.others, this.creatures, this.parked]) m.clear();
     this.fx.clear();
+    this.env?.dispose(); this.env = null; this.realSky = null; this.grass = null;
+    this.scene.environment = null;
     this.precip = null; this.precipKind = null; this.towns = []; this.footprints = []; this.wardMesh = null;
     this.dayLevel = this.lightLevel = this.fogLevel = null;
     this.planetId = null;
@@ -352,7 +397,15 @@ export class SurfaceView {
     for (let k = 0; k < n * n; k++) { uv[k * 2] = pos[k * 3] / 9; uv[k * 2 + 1] = pos[k * 3 + 2] / 9; }
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     const dt = detailTextures();
-    this.terrain = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: dt.color, normalMap: dt.normal, normalScale: new THREE.Vector2(0.8, 0.8) }));
+    let mat;
+    if (realism()) {
+      const climate = climateOf(this.planet);
+      const rock = new THREE.Color(prof.mid).lerp(new THREE.Color('#77716a'), 0.6).multiplyScalar(0.85);
+      const sand = new THREE.Color(prof.low).lerp(new THREE.Color('#cdb88e'), 0.7);
+      const cold = climate === 'frozen' || climate === 'cold';
+      mat = terrainMaterial({ rock: '#' + rock.getHexString(), sand: '#' + sand.getHexString(), water: prof.water, snowLine: cold ? (prof.water ?? 0) + prof.amp * 0.45 : 9999, dry: climate === 'arid' || climate === 'scorching' });
+    } else mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: dt.color, normalMap: dt.normal, normalScale: new THREE.Vector2(0.8, 0.8) });
+    this.terrain = new THREE.Mesh(g, mat);
     this.terrain.material.userData.paint = 1.15;
     this.terrain.receiveShadow = true;
     this.terrain.userData.noCast = true;
@@ -387,6 +440,7 @@ export class SurfaceView {
       if (kk >= 0 && kk < VERTS * VERTS) this.colorVertex(kk);
     }
     this.terrainGeo.attributes.color.needsUpdate = true;
+    this.grass?.syncTerrain(this.terrainGeo);
   }
 
   buildFlora(prof) {
@@ -418,19 +472,38 @@ export class SurfaceView {
         im.setMatrixAt(i, m);
       });
       this.root.add(im);
+      return im;
     };
     const water = prof.water ?? -999;
     const dry = items.filter((f) => heightAt(this.planet, f.x, f.z, this.data.digs) > water + 0.5);
     const wet = items.filter((f) => heightAt(this.planet, f.x, f.z, this.data.digs) <= water + 0.5);
     const of = (kind, list = dry) => list.filter((f) => f.kind === kind);
-    const M = (opts) => new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true, ...opts });
+    const real = realism();
+    const M = (opts, detail = { normal: 'rough', scale: 1.2 }) => {
+      const m = new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: !real, ...opts });
+      return real ? realSurface(m, detail) : m;
+    };
     const trunk = M({ color: '#5a4030', roughness: 1 });
     const anime = !!this.S.gfx?.anime;
     const leafColor = anime ? (this.planet.holy ? '#8ad06a' : this.planet.starter ? '#4cc46a' : '#3a9a4a') : this.planet.holy ? '#6aaa4a' : this.planet.starter ? '#3aaa6a' : '#2f7a3a';
     place(new THREE.CylinderGeometry(0.25, 0.4, 5, 6), trunk, of('tree'), 2.5);
     const puff = (r, x, y, z) => new THREE.IcosahedronGeometry(r, 2).translate(x, y, z);
     const crown = () => mergeGeometries([puff(1.9, 0, 0, 0), puff(1.4, 1.3, -0.4, 0.4), puff(1.4, -1.2, -0.3, -0.5), puff(1.3, 0.2, 1.2, -0.2), puff(1.2, -0.3, -0.6, 1.3)]);
-    if (this.S.gfx?.style === 'anime') {
+    if (real) {
+      // Realistic trees: bark trunks and branches under crowns of leaf clusters; pines on cold
+      // and wooded worlds.
+      const climate = climateOf(this.planet);
+      const pineShare = climate === 'frozen' || climate === 'cold' ? 1 : prof.tags.includes('forest') ? 0.55 : 0.3;
+      const trees = of('tree');
+      const tint = this.planet.holy ? '#eaffd8' : climate === 'humid' ? '#d8f0c8' : '#ffffff';
+      for (const [list, kind, seed] of [[trees.filter((f) => f.v >= pineShare), 'broad', 3], [trees.filter((f) => f.v < pineShare), 'pine', 7]]) {
+        if (!list.length) continue;
+        const model = treeModels(kind, seed), mats = treeMaterials(model.leafKind, tint);
+        place(model.trunk, mats.bark, list, -0.15);
+        const leaves = place(model.leaves, mats.leaves, list, -0.15);
+        leaves.customDepthMaterial = mats.depth;
+      }
+    } else if (this.S.gfx?.style === 'anime') {
       // Painted-background trees in muted greens: tall layered pines mixed with leafy crowns.
       const trees = of('tree'), pines = trees.filter((_, i) => i % 3 !== 0), leafy = trees.filter((_, i) => i % 3 === 0);
       const cold = this.planet.type === 'Ice';
@@ -446,7 +519,7 @@ export class SurfaceView {
     }
     place(new THREE.CylinderGeometry(0.2, 0.3, 7, 6), trunk, of('palm'), 3.5);
     place(new THREE.ConeGeometry(2.6, 1.2, 7), M({ color: '#3a9a4a' }), of('palm'), 7.2);
-    { const rockMat = M({ color: prof.mid, roughness: 1 }); rockMat.userData.stone = 1.2; place(new THREE.DodecahedronGeometry(1.4, 0), rockMat, of('rock'), 0.6, 0.7); }
+    { const rockMat = M({ color: real ? new THREE.Color(prof.mid).lerp(new THREE.Color('#7a756e'), 0.55) : prof.mid, roughness: 1 }, { normal: 'rock', scale: 0.35, strength: 1.4, dirt: 0.3 }); rockMat.userData.stone = 1.2; place(real ? rockGeometry(5) : new THREE.DodecahedronGeometry(1.4, 0), rockMat, of('rock'), real ? 0.35 : 0.6, 0.7); }
     place(new THREE.ConeGeometry(0.8, 5, 5), M({ color: '#cfefff', roughness: 0.2, transparent: true, opacity: 0.85 }), of('spike'), 2.4);
     place(new THREE.CylinderGeometry(0.45, 0.5, 3.4, 8), M({ color: '#4a7a3a' }), of('cactus'), 1.7);
     place(new THREE.CylinderGeometry(0.35, 0.5, 4, 8), M({ color: '#d8c8e8' }), of('mushroom'), 2);
@@ -528,6 +601,60 @@ export class SurfaceView {
     }
   }
 
+  // The realistic sky: the sun lights the world through the atmosphere, clouds follow the
+  // weather, the fog takes the horizon's color, and the scene is lit by the sky itself.
+  updateRealSky(dt, t) {
+    const sun = sunAt(this.planet, t), wxId = weatherAt(this.planet, t), wx = weatherInfo(wxId);
+    this.weather = wx;
+    this.sunState = sun;
+    const k = Math.min(1, dt * 0.5);
+    this.dayLevel = this.dayLevel == null || Math.abs(sun.daylight - this.dayLevel) > 0.25 ? sun.daylight : this.dayLevel + (sun.daylight - this.dayLevel) * k;
+    this.lightLevel = this.lightLevel == null ? wx.light : this.lightLevel + (wx.light - this.lightLevel) * k;
+    this.fogLevel = this.fogLevel == null ? wx.fog : this.fogLevel + (wx.fog - this.fogLevel) * k;
+    const day = this.dayLevel, light = this.lightLevel;
+    this.sunDir.set(...sun.dir);
+    const u = this.realSky.material.uniforms;
+    u.sunDir.value.copy(this.sunDir);
+    u.time.value = t % 3600;
+    const cover = { clear: 0.32, overcast: 0.86, rain: 0.93, storm: 0.98, snow: 0.88, blizzard: 0.99, fog: 0.6, sandstorm: 0.55, ashfall: 0.92 }[wxId] ?? 0.4;
+    u.coverage.value += (cover - u.coverage.value) * k;
+    u.cloudDark.value = 0.45 + (1 - light) * 1.2;
+    u.night.value = 1 - day;
+    const sc = skyColors(this.sunDir, u.betaRBase.value, this.turbidity, u.rayleigh.value);
+    const sunCol = sc.sun.clone();
+    const mx = Math.max(sunCol.r, sunCol.g, sunCol.b, 1e-3);
+    sunCol.multiplyScalar(1 / mx);
+    this.sun.color.copy(sunCol);
+    this.sun.intensity = this.sunPower * day * Math.pow(light, 1.6) * (sun.dir[1] > 0 ? Math.min(1, sun.dir[1] * 6) : 0);
+    this.moon.intensity = (1 - day) * 1.2;
+    this.moon.position.copy(this.sunDir).multiplyScalar(-300).add(this.sun.target.position);
+    this.moon.target.position.copy(this.sun.target.position);
+    // Lightning.
+    this.ambient.intensity = 0;
+    if (wx.lightning && Math.random() < dt * 0.08) this.flashT = 0.3;
+    this.flashT = Math.max(0, this.flashT - dt);
+    if (this.flashT > 0) this.ambient.intensity = this.flashT * 10;
+    // Fog: the color of the horizon, greyed by weather, denser in storms and snow.
+    const fog = sc.horizon.clone();
+    const lum = fog.r * 0.3 + fog.g * 0.59 + fog.b * 0.11;
+    fog.lerp(new THREE.Color(lum, lum, lum * 1.05), (1 - light) * 0.8);
+    fog.lerp(new THREE.Color('#0b1220').multiplyScalar(0.4), Math.max(0, 0.65 - day) * 0.6);
+    this.scene.fog.color.copy(fog);
+    this.scene.fog.density = 0.00055 / Math.max(0.18, this.fogLevel);
+    this.scene.background = fog;
+    // Light from the sky itself, refreshed as the sun moves.
+    if (this.env) {
+      const tex = this.env.update(this.sunDir, performance.now());
+      if (tex) this.scene.environment = tex;
+      this.scene.environmentIntensity = (0.35 + 0.65 * day) * (0.7 + 0.3 * light);
+    }
+    // The eye adjusts to the dark.
+    if (this.S.gfx) this.S.gfx.exposureK = 1 + (1 - day) * 4 + (1 - light) * 0.6;
+    this.setPrecip(wx.precip || null);
+    if (this.precip) this.precip.userData.update(t, this.camera.position);
+    if (this.grass) this.grass.update(t, this.camera.position, wxId === 'storm' || wxId === 'blizzard' || wxId === 'sandstorm' ? 2.2 : wxId === 'rain' ? 1.4 : 1);
+  }
+
   // Rain, snow, blowing sand or falling ash around the camera, by the weather.
   setPrecip(kind) {
     if (this.precipKind === kind) return;
@@ -558,6 +685,7 @@ export class SurfaceView {
 
   // The sun crosses the sky; weather dims it, fogs the air and brings rain, snow or storms.
   updateSky(dt, t) {
+    if (this.realSky) return this.updateRealSky(dt, t);
     const sun = sunAt(this.planet, t), wx = weatherInfo(weatherAt(this.planet, t));
     this.weather = wx;
     this.sunState = sun;

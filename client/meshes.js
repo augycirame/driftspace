@@ -1,12 +1,48 @@
 // 3D models built procedurally: block ships, NPC ships, people, creatures, stations, labels.
 
 import * as THREE from 'three';
-import { addInkHull } from './toon.js';
+import { addInkHull as inkHull } from './toon.js';
+import { realism, realSurface } from './realism.js';
 import { SHIP_PARTS, SHIP_BLOCK } from '/shared/rules.js';
 import { mulberry32 } from '/shared/rng.js';
 import { PEOPLES } from '/shared/content/peoples.js';
 
 const box = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
+
+// Realistic style: no ink outlines; instead every material gets surface detail by what it is
+// made of (tagged as userData.kind), and unlit face details become glossy, lit ones.
+const addInkHull = (g) => (realism() ? realify(g) : inkHull(g));
+const REAL_KINDS = {
+  cloth: { normal: 'fabric', scale: 7, strength: 0.75, dirt: 0.14, roughness: 0.9 },
+  leather: { normal: 'leather', scale: 6, strength: 0.8, dirt: 0.2, roughness: 0.62 },
+  skin: { normal: 'fine', scale: 9, strength: 0.18, dirt: 0.05, roughness: 0.52 },
+  hair: { normal: 'fabric', scale: 18, strength: 0.9, dirt: 0.06, roughness: 0.45 },
+  metal: { normal: 'scratched', scale: 4, strength: 0.6, dirt: 0.12 },
+  wood: { normal: 'wood', scale: 5, strength: 0.9, dirt: 0.2 },
+  hide: { normal: 'leather', scale: 2.2, strength: 1, dirt: 0.25, roughness: 0.75 },
+  armor: { normal: 'scratched', scale: 2, strength: 0.7, dirt: 0.15 },
+};
+export function realify(g, fallback = 'cloth') {
+  const done = new Map();
+  g.traverse((o) => {
+    if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
+    let m = o.material;
+    if (done.has(m)) { o.material = done.get(m); return; }
+    const src = m;
+    if (m.isMeshBasicMaterial && m.userData.face) {
+      m = new THREE.MeshStandardMaterial({ color: m.color, roughness: 0.18 });
+    } else if (m.isMeshStandardMaterial) {
+      const k = REAL_KINDS[m.userData.kind || fallback] || REAL_KINDS.cloth;
+      m.flatShading = false;
+      if (k.roughness != null && !m.userData.kind?.startsWith?.('metal')) m.roughness = k.roughness;
+      realSurface(m, { ...k, local: true });
+    }
+    done.set(src, m);
+    o.material = m;
+    o.castShadow = true;
+  });
+  return g;
+}
 
 // Merge unit boxes into one geometry with vertex colors. Each part: [x, y, z, sx, sy, sz, color].
 export function mergeBoxes(parts) {
@@ -73,6 +109,10 @@ export function buildShip(blocks, tint = '#9fd0ff') {
     else if (t === 'thruster') { parts.push([x * S, y * S, z * S, S * 0.85, S * 0.85, S, color]); }
     else if (t === 'cockpit') { parts.push([x * S, y * S, z * S, S * 0.9, S * 0.8, S, '#3a4a60']); parts.push([x * S, y * S + S * 0.35, z * S - S * 0.1, S * 0.6, S * 0.3, S * 0.6, '#9fe8ff']); }
     else parts.push([x * S, y * S, z * S, S * 0.98, S * 0.98, S * 0.98, color]);
+  }
+  if (realism() && !shipMat.userData.realSurface) {
+    shipMat.metalness = 0.72; shipMat.roughness = 0.36;
+    realSurface(shipMat, { normal: 'metal', scale: 1.4, strength: 0.7, dirt: 0.25, local: true });
   }
   const mesh = new THREE.Mesh(mergeBoxes(parts), shipMat);
   group.add(mesh);
@@ -226,14 +266,14 @@ export function buildHuman(opts) {
   const body = new THREE.Group();
   body.scale.set(o.width, o.height, o.width);
   g.add(body);
-  const M = (c, x = {}) => { const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, ...x }); m.userData.paint = 0; return m; };
-  const B = (c) => new THREE.MeshBasicMaterial({ color: c });
+  const M = (c, x = {}, kind = 'cloth') => { const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, ...x }); m.userData.paint = 0; m.userData.kind = kind; return m; };
+  const B = (c) => { const m = new THREE.MeshBasicMaterial({ color: c }); m.userData.face = true; return m; };
   const tunicColor = new THREE.Color(o.tunic);
-  const tunic = M(tunicColor), trim = M(tunicColor.clone().multiplyScalar(0.62)), pants = M(o.pants || '#3a3236'), boot = M(o.boots || '#4a4944');
-  const rope = M('#cbbd98'), skin = M(o.skin), hair = M(o.hair), hairDark = M(new THREE.Color(o.hair).multiplyScalar(0.72));
+  const tunic = M(tunicColor), trim = M(tunicColor.clone().multiplyScalar(0.62)), pants = M(o.pants || '#3a3236'), boot = M(o.boots || '#4a4944', {}, 'leather');
+  const rope = M(o.belt || '#cbbd98', {}, o.belt ? 'leather' : 'cloth'), skin = M(o.skin, {}, 'skin'), hair = M(o.hair, {}, 'hair'), hairDark = M(new THREE.Color(o.hair).multiplyScalar(0.72), {}, 'hair');
   const armor = o.armor;
-  const plate = M(armor > 60 ? '#b8a060' : armor > 20 ? '#9aa0a6' : '#6a5440', { roughness: armor > 20 ? 0.45 : 0.9, metalness: armor > 20 ? 0.35 : 0 });
-  const metal = M('#9aa0a8', { roughness: 0.4, metalness: 0.5 }), gold = M('#e0b848', { roughness: 0.35, metalness: 0.6 }), woodM = M('#6a4a2a');
+  const plate = M(armor > 60 ? '#b8a060' : armor > 20 ? '#9aa0a6' : '#6a5440', { roughness: armor > 20 ? 0.45 : 0.9, metalness: armor > 20 ? 0.35 : 0 }, armor > 20 ? 'metal' : 'leather');
+  const metal = M('#9aa0a8', { roughness: 0.4, metalness: 0.5 }, 'metal'), gold = M('#e0b848', { roughness: 0.35, metalness: 0.6 }, 'metal'), woodM = M('#6a4a2a', {}, 'wood');
   const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = body) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
@@ -333,7 +373,7 @@ export function buildHuman(opts) {
   if (o.bow) add(new THREE.TorusGeometry(0.4, 0.012, 4, 16, Math.PI).rotateZ(Math.PI / 2), woodM, 0, 1.15, 0.2, 0, 0, 0.3);
   if (o.lute) add(new THREE.SphereGeometry(0.1, 10, 8).scale(1, 1.3, 0.5), woodM, 0.12, 1.05, -0.16);
   if (o.gun) {
-    const gun = add(new THREE.BoxGeometry(0.06, 0.09, 0.4), M('#3a3a3e', { roughness: 0.5, metalness: 0.3 }), 0, -0.62, 0, 0, 0, 0, right);
+    const gun = add(new THREE.BoxGeometry(0.06, 0.09, 0.4), M('#3a3a3e', { roughness: 0.5, metalness: 0.3 }, 'metal'), 0, -0.62, 0, 0, 0, 0, right);
     gun.geometry.rotateX(Math.PI / 2);
     g.userData.gun = gun;
   }
@@ -409,7 +449,7 @@ export function buildMech(color = '#7aa0c8', tier = 1) {
   add(new THREE.BoxGeometry(0.3, 0.12, 0.3), glow, -0.6, 3.95, 0.2);
   g.userData.legs = legs;
   g.userData.mech = true;
-  return addInkHull(g);
+  return realism() ? realify(g, 'armor') : addInkHull(g);
 }
 
 // A werewolf in its night form: a hunched, shaggy wolf-man.
@@ -432,7 +472,7 @@ export function buildWerewolf(fur = '#6a5a4a') {
   }
   add(new THREE.ConeGeometry(0.08, 0.6, 6).rotateX(-1.1), furM, 0, 0.95, 0.45);
   g.scale.setScalar(1.15);
-  return addInkHull(g);
+  return realism() ? realify(g, 'hide') : addInkHull(g);
 }
 
 // A chibi pilot: chibi proportions, a big expressive face, layered spiky hair in the pilot's
@@ -508,9 +548,22 @@ function buildChibiPerson(color, armor) {
   return addInkHull(g);
 }
 
+// The realistic pilot: a worn flight suit in the pilot's color, harness, boots and a sidearm.
+const SKIN = ['#e8c4a8', '#d8a888', '#c08a68', '#9a6a4a', '#6a4a36', '#f0d0b8'];
+function buildRealPerson(color, armor) {
+  const suit = new THREE.Color(color);
+  const hsl = {}; suit.getHSL(hsl);
+  suit.setHSL(hsl.h, Math.min(hsl.s, 0.35), 0.32);
+  return buildHuman({
+    tunic: suit, pants: suit.clone().multiplyScalar(0.7), boots: '#2a2622', belt: '#3a3028',
+    skin: pick(SKIN, color, 3), hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), armor,
+  });
+}
+
 export function buildPerson(color, armor = 0) {
   if (animeMode === 'chibi') return buildChibiPerson(color, armor);
   if (animeMode) return buildAnimePerson(color, armor);
+  if (realism()) return buildRealPerson(color, armor);
   const g = new THREE.Group();
   const suit = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.2 });
   const plate = new THREE.MeshStandardMaterial({ color: armor > 60 ? '#c9a24a' : armor > 20 ? '#7a8aa0' : '#3a4250', roughness: 0.4, metalness: 0.6 });
@@ -740,7 +793,7 @@ export function buildCreature(color, size, seed = 1, shape = 'quad', def = {}) {
     }
   }
   g.userData.legs = legs;
-  return animeMode ? addInkHull(g) : g;
+  return animeMode ? addInkHull(g) : realism() ? realify(g, 'hide') : g;
 }
 
 // A structure from the content library's part list. '@god' colors take the shrine's god color.
@@ -755,6 +808,7 @@ export function buildStructure(def, godColor, raceColors = null) {
       // Muted, unlit parts are masonry: the anime style draws stonework on them.
       const hsl = {}; new THREE.Color(c).getHSL(hsl);
       if (!glow && hsl.s < 0.3 && hsl.l > 0.15) m.userData.stone = 1.25;
+      if (!glow && realism()) { m.flatShading = false; realSurface(m, m.userData.stone ? { normal: 'rock', scale: 0.3, strength: 1.2, dirt: 0.3 } : { normal: 'scratched', scale: 0.6, strength: 0.7, dirt: 0.25 }); }
       mats.set(key, m);
     }
     return mats.get(key);
@@ -786,6 +840,8 @@ export function buildStation(faction = null, capital = false) {
   const trim = faction === 'empire' ? '#e8c547' : faction === 'rebellion' ? '#b8502a' : '#8fa6c8';
   const metal = new THREE.MeshStandardMaterial({ color: trim, metalness: 0.7, roughness: 0.35 });
   const dark = new THREE.MeshStandardMaterial({ color: faction === 'empire' ? '#e8e4da' : faction === 'rebellion' ? '#4a3a30' : '#2b3d63', metalness: 0.6, roughness: 0.5 });
+  realSurface(metal, { normal: 'metal', scale: 0.06, strength: 0.8, dirt: 0.25, local: true });
+  realSurface(dark, { normal: 'metal', scale: 0.05, strength: 0.9, dirt: 0.3, local: true });
   const ring = new THREE.Mesh(new THREE.TorusGeometry(120, 12, 12, 48), metal);
   ring.rotation.x = Math.PI / 2;
   g.add(ring);
@@ -812,6 +868,8 @@ function buildSanctum() {
   const g = new THREE.Group();
   const white = new THREE.MeshStandardMaterial({ color: '#f0ece0', metalness: 0.4, roughness: 0.4 });
   const gold = new THREE.MeshStandardMaterial({ color: '#e8c547', metalness: 0.9, roughness: 0.25, emissive: '#6a5010', emissiveIntensity: 0.4 });
+  realSurface(white, { normal: 'plaster', scale: 0.04, strength: 0.7, dirt: 0.2, local: true });
+  realSurface(gold, { normal: 'scratched', scale: 0.05, strength: 0.5, dirt: 0.1, local: true });
   const nave = new THREE.Mesh(new THREE.BoxGeometry(90, 70, 220), white);
   g.add(nave);
   const dome = new THREE.Mesh(new THREE.SphereGeometry(70, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), gold);
