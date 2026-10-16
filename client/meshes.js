@@ -3,6 +3,8 @@
 import * as THREE from 'three';
 import { addInkHull as inkHull } from './toon.js';
 import { realism, realSurface } from './realism.js';
+import { buildRealShip } from './realship.js';
+import { buildRealHuman } from './realhuman.js';
 import { SHIP_PARTS, SHIP_BLOCK } from '/shared/rules.js';
 import { mulberry32 } from '/shared/rng.js';
 import { PEOPLES } from '/shared/content/peoples.js';
@@ -95,6 +97,7 @@ export function glowSprite(color, size, opacity = 1) {
 
 // A player's ship from its blocks. Tinted with the pilot's color; thrusters glow.
 export function buildShip(blocks, tint = '#9fd0ff') {
+  if (realism()) return addFlames(buildRealShip(blocks, tint), blocks, 1.05);
   const group = new THREE.Group();
   const S = SHIP_BLOCK;
   const parts = [];
@@ -110,17 +113,19 @@ export function buildShip(blocks, tint = '#9fd0ff') {
     else if (t === 'cockpit') { parts.push([x * S, y * S, z * S, S * 0.9, S * 0.8, S, '#3a4a60']); parts.push([x * S, y * S + S * 0.35, z * S - S * 0.1, S * 0.6, S * 0.3, S * 0.6, '#9fe8ff']); }
     else parts.push([x * S, y * S, z * S, S * 0.98, S * 0.98, S * 0.98, color]);
   }
-  if (realism() && !shipMat.userData.realSurface) {
-    shipMat.metalness = 0.72; shipMat.roughness = 0.36;
-    realSurface(shipMat, { normal: 'metal', scale: 1.4, strength: 0.7, dirt: 0.25, local: true });
-  }
   const mesh = new THREE.Mesh(mergeBoxes(parts), shipMat);
   group.add(mesh);
+  return addFlames(group, blocks);
+}
+
+// Thruster flames and shield glows (shared by both ship styles).
+function addFlames(group, blocks, behind = 0.7) {
+  const S = SHIP_BLOCK;
   const flames = [];
   for (const [x, y, z, t] of blocks) {
     if (t !== 'thruster') continue;
     const g = glowSprite('#ffa050', S * 2.2, 0.0);
-    g.position.set(x * S, y * S, z * S + S * 0.7);
+    g.position.set(x * S, y * S, z * S + S * behind);
     group.add(g);
     flames.push(g);
   }
@@ -136,6 +141,7 @@ export function buildShip(blocks, tint = '#9fd0ff') {
 
 export function setThrust(group, on, t) {
   for (const f of group.userData.flames || []) f.material.opacity = on ? 0.75 + Math.sin(t * 40 + f.position.x) * 0.2 : 0.12;
+  for (const m of group.userData.nozzles || []) m.emissiveIntensity += ((on ? 9 + Math.sin(t * 40) * 1.5 : 1.2) - m.emissiveIntensity) * 0.2;
 }
 
 export const PIRATE_SHIP = [
@@ -261,6 +267,7 @@ function pick(list, key, salt = 0) {
 //   opts: tunic, skin, hair, eyes, armor, female, ears (elf), beard, height, width (dwarf),
 //         robe, cloak, role gear (crown, helmet, spear, staff, hammer, bow, hat, apron, lute).
 export function buildHuman(opts) {
+  if (realism()) return buildRealHuman(opts);
   const o = { armor: 0, female: false, ears: false, beard: false, height: 1, width: 1, gun: true, ...opts };
   const g = new THREE.Group();
   const body = new THREE.Group();
@@ -554,9 +561,9 @@ function buildRealPerson(color, armor) {
   const suit = new THREE.Color(color);
   const hsl = {}; suit.getHSL(hsl);
   suit.setHSL(hsl.h, Math.min(hsl.s, 0.35), 0.32);
-  return buildHuman({
-    tunic: suit, pants: suit.clone().multiplyScalar(0.7), boots: '#2a2622', belt: '#3a3028',
-    skin: pick(SKIN, color, 3), hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), armor,
+  return buildRealHuman({
+    pilot: true, tunic: suit, pants: suit, boots: '#2a2622', webbing: '#2c2c28', patch: color,
+    skin: pick(SKIN, color, 3), hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), armor, female: pick([0, 1], color, 11) === 1,
   });
 }
 
