@@ -78,6 +78,16 @@ markers on each other, and a party warp that jumps you straight to a member.
 Then a new era begins: the chapters repeat with bigger goals, and the galaxy keeps every change
 from earlier eras. Contribute at any station, and follow progress in the journal (J).
 
+## Graphics
+
+Press **O** for Options to pick a graphics quality: Low, Medium, High or Ultra. Medium and above
+add bloom glow, real-time shadows on planets, sky domes with a visible sun, and textured terrain
+with rippling water. High and Ultra render at higher resolution, add lens flares, sharper planet
+textures and denser plant life. Planet surfaces in space are generated on the GPU from 3D noise
+(seamless, with relief and glowing atmospheres), and space has a procedural nebula sky that
+changes color from region to region. Phones and small screens start on Low; the choice is saved
+in the browser.
+
 ## The content library (`shared/content/`)
 
 Everything planets are made of lives in plain data files. Planet generation draws from them,

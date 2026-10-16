@@ -369,6 +369,30 @@ export class UI {
     });
   }
 
+  // Graphics quality (key O).
+  options() {
+    this.open('options', 'Options', (body) => {
+      const gfx = this.S.gfx;
+      const h = document.createElement('h3');
+      h.textContent = 'Graphics quality';
+      body.appendChild(h);
+      const desc = {
+        low: 'Lower resolution, no glow or shadows, fewer plants. For older computers and phones.',
+        medium: 'Glow, shadows and real skies at normal resolution.',
+        high: 'Sharper rendering, detailed shadows, lens flares and lusher planets.',
+        ultra: 'Everything at maximum. Needs a strong graphics card.',
+      };
+      for (const [id, q] of Object.entries(gfx.constructor.QUALITY || {})) {
+        const b = this.button(id === gfx.level ? `${q.name} ✓` : q.name, () => { gfx.set(id); this.rerender(); }, id === gfx.level ? '' : 'alt');
+        body.appendChild(this.row(`<b>${q.name}</b><br><span class="small dim">${desc[id]}</span>`, b));
+      }
+      const p = document.createElement('p');
+      p.className = 'small dim';
+      p.textContent = 'Your choice is remembered in this browser.';
+      body.appendChild(p);
+    });
+  }
+
   dialogue(who) {
     this.open('dialogue', who, (body) => {
       body.className = 'dialogue';
@@ -397,6 +421,7 @@ export class UI {
         <h3>Anywhere</h3><table>
         <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr>
         <tr><td>K</td><td>Codex: creatures, terrains, structures, relics, gods</td></tr>
+        <tr><td>O</td><td>Options (graphics quality)</td></tr>
         <tr><td>Enter</td><td>Chat (/p for party)</td></tr><tr><td>H</td><td>This manual</td></tr></table>
         <p class="small">Haven's sectors are safe. Beyond them, pirates hunt and other pilots can fire on you. Ore and loot get better the farther you go.</p>`;
     });

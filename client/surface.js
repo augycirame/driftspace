@@ -16,6 +16,70 @@ import { ALIEN_RACES } from '/shared/content/aliens.js';
 import { DUNGEON_THEMES } from '/shared/content/dungeons.js';
 import { FX } from './fx.js';
 
+// Tiling textures shared by every planet: fine ground detail and rippling water.
+let detail = null;
+function detailTextures() {
+  if (detail) return detail;
+  const N = 256, h = new Float32Array(N * N);
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  // Sum a few octaves of smoothed random grids, wrapping at the edges so the texture tiles.
+  for (const [cells, amp] of [[8, 0.5], [16, 0.25], [32, 0.15], [64, 0.1]]) {
+    const g = Array.from({ length: cells * cells }, rnd);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const fx = (x / N) * cells, fy = (y / N) * cells, ix = Math.floor(fx), iy = Math.floor(fy), tx = fx - ix, ty = fy - iy;
+      const at = (i, j) => g[((j + cells) % cells) * cells + ((i + cells) % cells)];
+      const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+      h[y * N + x] += amp * ((at(ix, iy) * (1 - sx) + at(ix + 1, iy) * sx) * (1 - sy) + (at(ix, iy + 1) * (1 - sx) + at(ix + 1, iy + 1) * sx) * sy);
+    }
+  }
+  const mk = (fn) => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = N;
+    const ctx = cv.getContext('2d'), img = ctx.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) { const [r, g, b] = fn(i); img.data.set([r, g, b, 255], i * 4); }
+    ctx.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(cv);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 4;
+    return t;
+  };
+  const normal = mk((i) => {
+    const x = i % N, y = (i - x) / N;
+    const dx = h[y * N + ((x + 1) % N)] - h[y * N + ((x + N - 1) % N)], dy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
+    const nx = -dx * 6, ny = -dy * 6, l = Math.hypot(nx, ny, 1);
+    return [(nx / l * 0.5 + 0.5) * 255, (ny / l * 0.5 + 0.5) * 255, (1 / l * 0.5 + 0.5) * 255];
+  });
+  const color = mk((i) => { const v = 205 + h[i] * 50; return [v, v, v]; });
+  color.colorSpace = THREE.SRGBColorSpace;
+  detail = { normal, color };
+  return detail;
+}
+
+// A sky dome: horizon haze fading up to a deeper zenith, with the sun's disk.
+function skyDome(prof, sunDir) {
+  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color('#1a3a7a'), 0.35);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { horizon: { value: new THREE.Color(prof.fog) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() } },
+    vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: `
+      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float h = clamp(d.y, 0.0, 1.0);
+        vec3 c = mix(horizon, zenith, pow(h, 0.6));
+        float s = max(dot(d, sunDir), 0.0);
+        c += vec3(1.0, 0.95, 0.85) * (pow(s, 900.0) * 4.0 + pow(s, 12.0) * 0.25);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+    side: THREE.BackSide, depthWrite: false, fog: false,
+  });
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1400, 32, 16), mat);
+  m.renderOrder = -1000;
+  m.frustumCulled = false;
+  return m;
+}
+
 const HALF_V = (VERTS - 1) / 2;
 const blockGeo = new THREE.BoxGeometry(SURFACE_GRID, SURFACE_GRID, SURFACE_GRID);
 const blockMats = {};
@@ -63,9 +127,21 @@ export class SurfaceView {
 
     this.root = new THREE.Group();
     sc.add(this.root);
-    const sun = new THREE.DirectionalLight('#fff4e0', 2.2);
-    sun.position.set(200, 300, 120);
-    this.root.add(sun);
+    const q = this.S.gfx?.q || {};
+    const sun = new THREE.DirectionalLight('#fff4e0', 2.4);
+    this.sunDir = new THREE.Vector3(200, 300, 120).normalize();
+    sun.position.copy(this.sunDir).multiplyScalar(300);
+    if (q.shadows) {
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(q.shadows, q.shadows);
+      const c = sun.shadow.camera;
+      c.left = c.bottom = -90; c.right = c.top = 90; c.near = 10; c.far = 700;
+      sun.shadow.bias = -0.0006;
+      sun.shadow.normalBias = 0.6;
+    }
+    this.root.add(sun, sun.target);
+    this.sun = sun;
+    if (q.sky) { this.sky = skyDome(prof, this.sunDir); this.root.add(this.sky); } else this.sky = null;
     this.root.add(new THREE.HemisphereLight(prof.sky, prof.low, 1.1));
     this.root.add(new THREE.AmbientLight('#ffffff', 0.25));
     const sunGlow = glowSprite('#fff8e0', 260, 0.9);
@@ -74,10 +150,17 @@ export class SurfaceView {
 
     this.buildTerrain(prof);
     if (prof.water != null) {
+      const waterNormal = detailTextures().normal.clone();
+      waterNormal.repeat.set(60, 60);
+      waterNormal.needsUpdate = true;
       const liquid = new THREE.Mesh(new THREE.PlaneGeometry(SURFACE_HALF * 2.4, SURFACE_HALF * 2.4).rotateX(-Math.PI / 2),
-        new THREE.MeshStandardMaterial({ color: prof.liquid, transparent: true, opacity: planet.type === 'Lava' ? 0.95 : 0.72, roughness: 0.15, metalness: 0.1,
-          emissive: planet.type === 'Lava' ? prof.liquid : '#000000', emissiveIntensity: planet.type === 'Lava' ? 0.8 : 0 }));
+        new THREE.MeshStandardMaterial({ color: prof.liquid, transparent: true, opacity: planet.type === 'Lava' ? 0.95 : 0.78, roughness: 0.08, metalness: 0.25,
+          normalMap: waterNormal, normalScale: new THREE.Vector2(0.6, 0.6),
+          emissive: planet.type === 'Lava' ? prof.liquid : '#000000', emissiveIntensity: planet.type === 'Lava' ? 0.9 : 0 }));
       liquid.position.y = prof.water;
+      liquid.receiveShadow = true;
+      liquid.userData.noCast = true;
+      this.liquid = liquid;
       this.root.add(liquid);
     }
     this.buildFlora(prof);
@@ -137,7 +220,13 @@ export class SurfaceView {
     g.computeVertexNormals();
     this.terrainGeo = g;
     for (let k = 0; k < n * n; k++) this.colorVertex(k);
-    this.terrain = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: false }));
+    const uv = new Float32Array(n * n * 2);
+    for (let k = 0; k < n * n; k++) { uv[k * 2] = pos[k * 3] / 9; uv[k * 2 + 1] = pos[k * 3 + 2] / 9; }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const dt = detailTextures();
+    this.terrain = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: dt.color, normalMap: dt.normal, normalScale: new THREE.Vector2(0.8, 0.8) }));
+    this.terrain.receiveShadow = true;
+    this.terrain.userData.noCast = true;
     this.root.add(this.terrain);
   }
 
@@ -175,6 +264,18 @@ export class SurfaceView {
     const items = [];
     const tiles = Math.ceil(SURFACE_HALF / 40);
     for (let tx = -tiles; tx < tiles; tx++) for (let tz = -tiles; tz < tiles; tz++) items.push(...floraFor(this.planet, tx, tz));
+    // Higher quality settings grow more plants (shifted copies); low thins them out.
+    const density = this.S.gfx?.q.flora ?? 1;
+    if (density < 1) items.splice(0, items.length, ...items.filter((_, i) => i % 2 === 0));
+    const base = items.slice();
+    for (let k = 1; k < density; k += 0.5) {
+      for (const f of base) {
+        const x = f.x + 13.7 * k + (f.v - 0.5) * 9, z = f.z - 17.3 * k + (f.r - 3) * 2;
+        if (Math.max(Math.abs(x), Math.abs(z)) > SURFACE_HALF - 30 || Math.hypot(x, z) < (this.planet.starter ? 80 : 45)) continue;
+        if (structuresOf(this.planet).some((st) => Math.hypot(st.x - x, st.z - z) < st.radius + 5)) continue;
+        items.push({ ...f, x, z, s: f.s * (0.8 + f.v * 0.4), r: f.r + k });
+      }
+    }
     const place = (geo, mat, list, yOff, sy = 1) => {
       if (!list.length) return;
       const im = new THREE.InstancedMesh(geo, mat, list.length);
@@ -392,6 +493,12 @@ export class SurfaceView {
   update(dt, t) {
     const S = this.S, me = S.me;
     if (!this.root) return;
+    // Keep the sun's shadow box centered on the pilot.
+    this.sun.target.position.set(me.x, me.y, me.z);
+    this.sun.position.set(me.x, me.y, me.z).addScaledVector(this.sunDir, 300);
+    if (this.sky) this.sky.position.copy(this.camera.position);
+    if (this.liquid?.material.normalMap) this.liquid.material.normalMap.offset.set(t * 0.01, t * 0.007);
+    if ((this.shadowAt = (this.shadowAt || 0) - dt) <= 0 && this.S.gfx?.q.shadows) { this.shadowAt = 0.5; this.shadowize(); }
     this.selfMesh.position.set(me.x, me.y, me.z);
     this.selfMesh.rotation.y = this.yaw;
     this.selfMesh.visible = !this.firstPerson && !S.dead;
@@ -509,6 +616,17 @@ export class SurfaceView {
       this.camera.position.copy(cam);
     }
     this.camera.lookAt(this.camera.position.clone().add(dir));
+  }
+
+  // Everything solid casts and receives shadows (checked every half second for new things).
+  shadowize() {
+    this.root.traverse((o) => {
+      if (!o.isMesh || o.userData.sh) return;
+      o.userData.sh = true;
+      if (o.material?.transparent || o.material?.isShaderMaterial) return;
+      o.receiveShadow = true;
+      if (!o.userData.noCast) o.castShadow = true;
+    });
   }
 
   // Where the crosshair points: first block or terrain hit along the camera ray.

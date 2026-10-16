@@ -8,6 +8,23 @@ import { mulberry32, fbm } from '/shared/rng.js';
 import { buildShip, buildNpc, buildStation, glowSprite, label, healthBar, setHealth, setThrust } from './meshes.js';
 import { FX } from './fx.js';
 import { ALIEN_RACES } from '/shared/content/aliens.js';
+import { planetTextures, atmosphereMaterial, nebulaSky } from './planettex.js';
+import { Lensflare, LensflareElement } from 'three/addons/objects/Lensflare.js';
+
+// Lens-flare sprites, drawn once.
+function flareTexture(ring = false) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, ring ? 40 : 0, 64, 64, 64);
+  grd.addColorStop(0, ring ? 'rgba(255,255,255,0)' : 'rgba(255,255,255,1)');
+  grd.addColorStop(ring ? 0.6 : 0.2, ring ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.5)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(cv);
+}
+let flareTex = null;
 
 const tmpV = new THREE.Vector3(), tmpQ = new THREE.Quaternion();
 const blockGeo = new THREE.BoxGeometry(WORLD_GRID, WORLD_GRID, WORLD_GRID);
@@ -21,49 +38,6 @@ function blockMat(id) {
     });
   }
   return blockMats[id];
-}
-
-// Procedural planet surface texture, cached per planet.
-const planetTex = new Map();
-function planetTexture(p) {
-  let t = planetTex.get(p.id);
-  if (t) return t;
-  const W = 256, H = 128;
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  const g = cv.getContext('2d');
-  const img = g.createImageData(W, H);
-  const base = new THREE.Color(p.color);
-  const seed = p.seed | 0;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const lon = (x / W) * Math.PI * 2, lat = (y / H) * Math.PI;
-      const nx = Math.cos(lon) * Math.sin(lat) * 3 + 10, nz = Math.sin(lon) * Math.sin(lat) * 3 + 10, ny = Math.cos(lat) * 3;
-      let n = fbm(nx + ny * 0.7, nz - ny * 0.3, seed, 5);
-      let c;
-      if (p.type === 'Gas') {
-        const band = Math.sin(lat * 14 + fbm(nx, nz, seed, 3) * 6) * 0.5 + 0.5;
-        c = base.clone().multiplyScalar(0.7 + band * 0.5);
-      } else if (p.type === 'Ocean' || p.type === 'Jungle') {
-        c = n < 0.5 ? new THREE.Color('#1e4f8a').multiplyScalar(0.7 + n) : base.clone().multiplyScalar(0.6 + n * 0.6);
-        if (Math.abs(lat - Math.PI / 2) > 1.25) c = new THREE.Color('#e8f4ff');
-      } else if (p.type === 'Lava') {
-        c = n > 0.55 ? new THREE.Color('#ff6a1a').multiplyScalar(0.8 + (n - 0.55) * 3) : base.clone().multiplyScalar(0.25 + n * 0.4);
-      } else if (p.type === 'Ice') {
-        c = base.clone().multiplyScalar(0.8 + n * 0.3);
-      } else {
-        c = base.clone().multiplyScalar(0.55 + n * 0.8);
-      }
-      const o = (y * W + x) * 4;
-      img.data[o] = Math.min(255, c.r * 255); img.data[o + 1] = Math.min(255, c.g * 255); img.data[o + 2] = Math.min(255, c.b * 255); img.data[o + 3] = 255;
-    }
-  }
-  g.putImageData(img, 0, 0);
-  t = new THREE.CanvasTexture(cv);
-  t.colorSpace = THREE.SRGBColorSpace;
-  if (planetTex.size > 60) { const k = planetTex.keys().next().value; planetTex.get(k).dispose(); planetTex.delete(k); }
-  planetTex.set(p.id, t);
-  return t;
 }
 
 function asteroidGeometry(a) {
@@ -95,6 +69,8 @@ export class SpaceView {
     this.selfRev = -1;
     this.centerKey = null;
 
+    this.sky = nebulaSky();
+    this.scene.add(this.sky);
     this.scene.add(new THREE.AmbientLight('#8090b0', 0.35));
     const hemi = new THREE.HemisphereLight('#9fb8ff', '#1a1020', 0.35);
     this.scene.add(hemi);
@@ -148,6 +124,10 @@ export class SpaceView {
 
     const region = generateSector(sx, sz, this.S.seed).region;
     this.baseBg = new THREE.Color().setHSL(region.hue / 360, 0.45, 0.025);
+    const u = this.sky.material.uniforms;
+    u.colA.value.setHSL(region.hue / 360, 0.65, 0.16 + region.nebula * 0.12);
+    u.colB.value.setHSL(((region.hue + 70) % 360) / 360, 0.6, 0.12 + region.density * 0.1);
+    u.seed.value = (Math.floor(sx / 12) * 7.31 + Math.floor(sz / 12) * 3.17) % 50;
     this.updateFarStars(sx, sz);
   }
 
@@ -186,18 +166,33 @@ export class SpaceView {
         group.add(disk);
         rec.extra.push({ spin: disk });
       } else {
-        const sun = new THREE.Mesh(new THREE.SphereGeometry(st.r, 32, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.5) }));
+        const sun = new THREE.Mesh(new THREE.SphereGeometry(st.r, 32, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.35).multiplyScalar(0.9) }));
         sun.position.set(st.x, st.y, st.z);
         group.add(sun);
-        const glow = glowSprite(st.color, st.r * 7, 0.9);
+        const glow = glowSprite(st.color, st.r * 6, 0.4);
         glow.position.copy(sun.position);
         group.add(glow);
         const light = new THREE.PointLight(st.color, 2.6, 0, 0);
         light.position.copy(sun.position);
         group.add(light);
+        const corona = glowSprite(new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.3), st.r * 1.9, 0.6);
+        corona.position.copy(sun.position);
+        group.add(corona);
+        if (this.S.gfx?.q.flare) {
+          flareTex ||= { core: flareTexture(), ring: flareTexture(true) };
+          const flare = new Lensflare();
+          flare.addElement(new LensflareElement(flareTex.core, 380, 0, new THREE.Color(st.color)));
+          flare.addElement(new LensflareElement(flareTex.ring, 140, 0.4, new THREE.Color(st.color)));
+          flare.addElement(new LensflareElement(flareTex.ring, 90, 0.7));
+          flare.addElement(new LensflareElement(flareTex.core, 60, 0.95, new THREE.Color(st.color)));
+          light.add(flare);
+        }
       }
       for (const p of s.planets) {
-        const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.r, 40, 28), new THREE.MeshStandardMaterial({ map: planetTexture(p), roughness: 0.9 }));
+        const q = this.S.gfx?.q;
+        const tex = planetTextures(this.S.gfx.renderer, p, q?.planetTex || 512);
+        const mesh = new THREE.Mesh(new THREE.SphereGeometry(p.r, q && q.planetTex >= 768 ? 96 : 64, q && q.planetTex >= 768 ? 64 : 40),
+          new THREE.MeshStandardMaterial({ map: tex.map, bumpMap: p.type === 'Gas' ? null : tex.bump, bumpScale: 4, roughness: p.type === 'Ocean' ? 0.55 : 0.9, metalness: 0.02 }));
         group.add(mesh);
         if (p.ring) {
           const ring = new THREE.Mesh(new THREE.RingGeometry(p.r * 1.4, p.r * 2.2, 64), new THREE.MeshBasicMaterial({ color: '#dcc8a0', side: THREE.DoubleSide, transparent: true, opacity: 0.5 }));
@@ -205,8 +200,10 @@ export class SpaceView {
           mesh.add(ring);
         }
         if (p.landable) {
-          const atmo = glowSprite(p.starter ? '#9fffd0' : '#9fc8ff', p.r * 2.9, 0.22);
+          const atmo = new THREE.Mesh(new THREE.SphereGeometry(p.r * 1.07, 48, 32), atmosphereMaterial(p.starter ? '#7fffc0' : p.holy ? '#ffe8a0' : p.type === 'Lava' ? '#ff8a4a' : '#7fb8ff', 1.4));
           mesh.add(atmo);
+        } else {
+          mesh.add(new THREE.Mesh(new THREE.SphereGeometry(p.r * 1.04, 48, 32), atmosphereMaterial(p.color, 0.7)));
         }
         const lb = label(p.name + (p.landable ? '' : ' (gas giant)'), p.starter ? '#9fffd0' : '#b8c8e0');
         lb.position.y = p.r + 30;
@@ -410,6 +407,9 @@ export class SpaceView {
 
     this.updateCamera(dt);
     this.starfield.position.copy(this.camera.position);
+    this.sky.position.copy(this.camera.position);
+    this.sky.material.uniforms.bright.value = eff.invasion ? 0.7 : 1;
+    if (eff.invasion) this.sky.material.uniforms.colB.value.lerp(new THREE.Color('#5a0a10'), 0.02);
     this.fx.update(dt);
   }
 

@@ -76,8 +76,10 @@ export class DungeonView {
       const glow = glowSprite(boss ? '#ff5a4a' : theme.light, 3, 0.9);
       glow.position.copy(light.position);
       this.root.add(glow);
+      this.torches ||= [];
       for (const [tx, tz] of [[r.x, r.y], [r.x + r.w - 1, r.y + r.h - 1]]) {
         const torch = glowSprite(theme.light, 1.6, 1);
+        this.torches.push(torch);
         torch.position.set((tx + 0.5) * DCELL, 3.2, (tz + 0.5) * DCELL);
         this.root.add(torch);
       }
@@ -129,6 +131,7 @@ export class DungeonView {
       this.root.traverse((o) => { o.geometry?.dispose?.(); if (o.material && !o.material.map) o.material.dispose?.(); });
     }
     this.root = null;
+    this.torches = [];
     this.key = null;
     this.others.clear();
     this.creatures.clear();
@@ -173,6 +176,8 @@ export class DungeonView {
       this.selfMesh.visible = !this.firstPerson && !S.dead;
     }
     this.portal.rotation.y = t;
+    // Torches flicker.
+    (this.torches || []).forEach((tc, i) => { const k = 1.4 + Math.sin(t * 9 + i * 1.7) * 0.15 + Math.sin(t * 23 + i) * 0.1; tc.scale.set(k, k, 1); });
     for (const g of this.chests.values()) if (g.userData.sparkle.visible) g.userData.sparkle.material.opacity = 0.5 + 0.4 * Math.sin(t * 3);
     this.updateCreatures(t);
     this.updateOthers();

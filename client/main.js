@@ -9,6 +9,7 @@ import { deposits } from '/shared/planet.js';
 import { SpaceView } from './space.js';
 import { SurfaceView } from './surface.js';
 import { DungeonView } from './dungeon.js';
+import { Graphics } from './graphics.js';
 import { Shipyard } from './shipyard.js';
 import { GalaxyMap } from './map.js';
 import { UI } from './ui.js';
@@ -32,9 +33,8 @@ const serverTime = () => (Date.now() + S.timeOffset) / 1000;
 // ---- rendering setup ----------------------------------------------------------------------------
 
 const canvas = $('game');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
-renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const gfx = new Graphics(canvas);
+S.gfx = gfx;
 const space = new SpaceView(S);
 const surface = new SurfaceView(S);
 const dungeon = new DungeonView(S);
@@ -42,10 +42,15 @@ const ui = new UI(S, send);
 const yard = new Shipyard(S, send);
 const map = new GalaxyMap(S, send);
 window.__views = { space, surface, dungeon };
+// Changing quality rebuilds what depends on it (planet textures, shadows, plants).
+gfx.onChange(() => {
+  space.rebuildSectors();
+  if (surface.planetId) surface.enter(surface.planetId, { ...surface.data, looted: [...surface.looted] });
+});
 ui.onShipyard = () => { document.exitPointerLock?.(); yard.show(); };
 
 function resize() {
-  renderer.setSize(innerWidth, innerHeight, false);
+  gfx.resize();
   for (const cam of [space.camera, surface.camera, dungeon.camera]) { cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
   if (yard.open) yard.resize();
 }
@@ -345,6 +350,7 @@ addEventListener('keydown', (e) => {
   if (k === 'p') { ui.current?.kind === 'party' ? ui.close() : ui.party(); return; }
   if (k === 'h') { ui.current?.kind === 'help' ? ui.close() : ui.help(); return; }
   if (k === 'k') { ui.current?.kind === 'codex' ? ui.close() : ui.codex(); return; }
+  if (k === 'o') { ui.current?.kind === 'options' ? ui.close() : ui.options(); return; }
   if (k === 'm') { map.toggle(); return; }
   if (overlayOpen()) return;
   keys.add(k);
@@ -425,7 +431,7 @@ function spaceFrame(dt, now) {
 
   const t = serverTime();
   space.update(dt, t, { thrusting: (input.fwd || 0) > 0, mineTarget: S.mineTarget, mode: S.mode, block: S.block });
-  renderer.render(space.scene, space.camera);
+  gfx.render(space.scene, space.camera, 'space');
 
   let prompt = '';
   const stn = space.nearbyStation(), planet = space.nearbyPlanet(t);
@@ -492,7 +498,7 @@ function surfaceFrame(dt, now) {
   }
 
   surface.update(dt, serverTime());
-  renderer.render(surface.scene, surface.camera);
+  gfx.render(surface.scene, surface.camera, 'surface');
 
   const it = surface.interaction();
   let prompt = it ? it.text : '';
@@ -537,7 +543,7 @@ function dungeonFrame(dt, now) {
     send({ t: 'walk', x: me.x, y: me.y, z: me.z, yaw: dungeon.yaw });
   }
   dungeon.update(dt, serverTime());
-  renderer.render(dungeon.scene, dungeon.camera);
+  gfx.render(dungeon.scene, dungeon.camera, 'dungeon');
 
   const it = dungeon.interaction();
   let prompt = it ? it.text : '';
@@ -616,7 +622,7 @@ function idleFrame(dt, now) {
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.08, t * 0.05, 0));
   S.me.q = [q.x, q.y, q.z, q.w];
   space.update(dt, serverTime(), { thrusting: true, mode: 'fly' });
-  renderer.render(space.scene, space.camera);
+  gfx.render(space.scene, space.camera, 'space');
 }
 
 function frame(now) {
