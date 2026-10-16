@@ -1,84 +1,98 @@
 # Driftspace (working title)
 
-An infinitely generated, multiplayer space-exploration sandbox. This folder is the first
-playable prototype: a shared, endless galaxy that runs in the browser.
+An infinitely generated, multiplayer 3D space sandbox that runs in the browser. Fly a ship you
+built block by block, land on planets and explore them on foot, fight pirates and alien swarms,
+party up with friends, and push a server-wide story forward. The story's outcome permanently
+changes the galaxy for everyone.
 
 ## Run it
 
 ```bash
 npm install
 npm start            # http://localhost:8080
-npm test             # determinism + end-to-end multiplayer tests
+npm test             # rules, determinism, and full end-to-end multiplayer tests
 ```
 
-To play together, open the URL in a few browser tabs, or put the server somewhere friends can
-reach it. Settings come from environment variables: `PORT`, `SEED` (a different seed gives a
-different universe) and `DATA_FILE` (where the world is saved, by default `data/world.json`).
+Settings come from environment variables:
+
+| Variable | What it does |
+|---|---|
+| `PORT` | Port to listen on (Render sets this). |
+| `SEED` | Universe seed. A different seed gives a different galaxy. |
+| `DATA_FILE` | Where the world is saved (default `data/world.json`). |
+| `ADMIN` | Pilot names (comma-separated) allowed to use admin chat commands. |
+| `STORY_SCALE` | Multiplies story goals, e.g. `0.25` for a small group, `4` for a busy server. |
 
 ## Put it online (Render)
 
-`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint**, pick this
-repository, and it creates the web service: `npm ci` to build, `npm start` to run, and a 1 GB
-disk at `/var/data` for the world save. Every push to `main` redeploys. Players open the
-service's `onrender.com` URL. WebSockets work there with no extra setup.
+`render.yaml` is a Render Blueprint: a web service (`npm ci`, then `npm start`) plus a 1 GB
+disk at `/var/data` for the world save. Every push to `main` redeploys. WebSockets work on
+Render with no extra setup. The disk needs a paid instance type. On the free plan, remove the
+`disk` block: the game still works, but the world resets on every restart or deploy.
 
-The disk needs a paid instance type. On the free plan, remove the `disk` block: the game
-still works, but the server sleeps when nobody's playing and the world resets on every
-restart or deploy.
+## The game
 
-## What you can do today
+**Start on Haven.** New pilots spawn on foot at Haven Landing, a settlement on the starter
+planet. Warden Ilse walks you through a short tutorial: dig ore, meet the quartermaster, take
+off, mine an asteroid, and dock at Haven Station.
 
-- **Fly** a ship through an endless galaxy. Each sector can hold a star (from red dwarfs to
-  black holes), orbiting planets, asteroid belts, a nebula, a station or a wormhole.
-- **Mine** asteroids for five ores. Ore gets richer the farther you travel from Haven
-  Station, so there's always a reason to push outward.
-- **Trade and upgrade** at stations: engine, mining laser, cargo hold, jump drive.
-- **Hyperspace jump** from the galaxy map (M). Jump range grows with upgrades. Wormholes fling
-  you hundreds of sectors away in one trip.
-- **Build** anything, block by block, anywhere in space (B), using the ore you mined. Builds
-  are permanent and everyone sees them. A **beacon** puts your mark on every player's galaxy map.
-- **Play together**: you see other pilots' ships, their mining beams and their builds, and
-  there's galaxy-wide chat.
+**Accounts.** Real accounts with a name and password. Passwords are hashed with scrypt, and
+only hashes of session tokens are stored. Your browser stays signed in.
+
+**Fly in 3D.** Steer with the mouse. Move with W/S and A/D, rise and sink with Space/C, roll
+with Q/E. The galaxy is endless. Every sector can hold a star (red dwarfs to black holes),
+orbiting planets, asteroid belts, stations and wormholes. Jump between sectors from the
+galaxy map (M).
+
+**Build your ship.** Ships are made of blocks: cockpit, hull, armor, thrusters, cargo pods,
+blasters, shield generators and wings. The ship's stats (speed, turning, hull, shields, guns,
+cargo) come from what it's made of. Edit it in the 3D shipyard at any station, or next to
+your ship when it's parked on a planet. Ore pays for new blocks, and removed blocks are refunded.
+
+**Land on planets.** Rocky, ice, lava, ocean, jungle and desert worlds, each with its own
+terrain, sky, liquid, flora and creatures. Dig into the ground for ore (crystal deposits are
+richer), raise terrain, and build structures. Gas giants have no surface to land on.
+
+**Weapons and armor.** On foot you carry a hand weapon (pistol, rifle, shotgun, plasma or
+railgun) and wear a helmet, chestplate and greaves. Gear comes in five tiers, from Scrap to
+Void. Buy it at shops, or loot it from pirates, creatures and the story's bosses. Armor
+reduces damage, and Void armor adds a personal shield.
+
+**Combat.** Ships carry blasters. Pirates hunt pilots outside the safe sectors around Haven,
+and other pilots can fire on you out there too. Destroyed ships respawn at your last station
+and lose their cargo. On planets, creatures attack anyone who wanders too far.
+
+**Parties of up to 4** (P). No friendly fire, shared bounties, party chat (`/p message`),
+markers on each other, and a party warp that jumps you straight to a member.
+
+**The story.** Four chapters run for the whole server, and everyone's actions count:
+1. *The Silent Signal*: deliver voidstone and iron to decode a signal.
+2. *The Hollow Swarm*: alien ships invade every sector, even Haven. Destroy enough of them and
+   the Hive Mothership appears for a server-wide boss fight.
+3. *The Ancient Gate*: pool materials to build a gate at Haven Station. It permanently opens a
+   route to the Far Reach, and aetherium, a new ore, starts appearing in the deep.
+4. *Echoes of the Precursors*: find and awaken five relics on distant planet surfaces. This
+   permanently extends every pilot's jump range.
+
+Then a new era begins: the chapters repeat with bigger goals, and the galaxy keeps every change
+from earlier eras. Contribute at any station, and follow progress in the journal (J).
+
+## Admin commands
+
+Pilots named in `ADMIN` can type these in chat: `/spawn pirate|hollow [n]`, `/tp <x> <z>`,
+`/land`, `/give <ore> [n]`, `/credits [n]`, `/story [n]` (advance the current goal), `/heal`.
 
 ## How it works
 
-The architecture is chosen so the universe can be infinite and shared, and still cheap to run.
-
 | Piece | Idea |
 |---|---|
-| `shared/universe.js` | A sector's contents are a **pure function of `(seed, x, y)`**. Nobody stores the universe. Server and clients generate the same sector independently. Smooth noise at the galaxy scale creates dense clusters, voids and regional color. |
-| `server/world.js` | The server stores **only player changes on top of the generated universe**: mined asteroids (they grow back after 30 minutes), placed blocks, beacons and pilot profiles. An untouched sector costs zero bytes. |
-| Interest management | Each client subscribes to the 3×3 sectors around itself. Updates go only to the players who can see them, so player count doesn't multiply bandwidth. |
-| Movement | The client simulates its own ship so flying feels instant (`shared/rules.js`). The server checks every update for plausible speed and snaps cheaters back. Mining, building, trading and jumping are fully decided by the server. |
-| Persistence | Saved to a JSON file every 15 s and on shutdown (atomic write). |
+| `shared/universe.js`, `shared/planet.js` | Sectors and planet surfaces are **pure functions of the seed**. Server and clients generate the same galaxy independently, and nobody stores it. |
+| `server/world.js` | Stores **only player changes**: mined asteroids, dug terrain, built blocks, beacons, pilots, story progress. An untouched sector or planet costs nothing. |
+| `server/combat.js`, `server/surface.js` | The server decides bolts, hitscan shots, NPC and creature AI, damage, loot and bounties. |
+| `server/story.js`, `shared/story.js` | The story director: community goals, chapter transitions, and the effects that change the galaxy. |
+| Interest management | In space, each client subscribes to the 3×3 sectors around it. On a planet, it hears only that planet. |
+| Movement | Clients simulate their own ship or pilot so controls feel instant (`shared/rules.js`). The server checks plausibility and snaps cheaters back. |
+| Client | Three.js (served from `node_modules`, no CDN). `client/space.js` and `client/surface.js` are the two scenes. `client/shipyard.js` is the 3D block editor. |
 
-A pilot name is claimed by a random token stored in the browser on first use. That's enough
-for a prototype, but it isn't real accounts.
-
-## Road to the full game
-
-This prototype proves the core loop and the architecture. Getting to "the ultimate sandbox
-MMO" is a long road. A rough order:
-
-1. **Depth of play**: ship combat and PvP zones, NPC factions and pirates, crafting chains
-   (ore → refined materials → components), functional blocks (thrusters, turrets, storage,
-   refineries, shipyards) so player builds become working ships and stations.
-2. **Landing on planets**: procedural planet surfaces using the same seed-plus-changes model,
-   with terrain you can dig into and edit.
-3. **Player economy and society**: player-run markets, contracts, guilds, territory claims,
-   and naming systems you discover first.
-4. **Scale-out server**: move from one process to sector-sharded servers with seamless
-   handoff, a real database (e.g. Postgres for profiles, a key-value store for sector changes),
-   binary netcode, real accounts.
-5. **Engine**: the 2D canvas client is a fast way to prove gameplay. A 3D client (Three.js/
-   WebGPU, or Godot/Unity/Unreal for native) can use the same server protocol and the same
-   universe generator, ported to its language.
-
-## Files
-
-```
-shared/   rng.js (hashing, noise), universe.js (procedural galaxy), rules.js (economy, physics)
-server/   server.js (HTTP + WebSocket), world.js (authoritative game state)
-client/   index.html, style.css, main.js (rendering, input, HUD, galaxy map)
-test/     universe.test.js, server.test.js
-```
+Saves from the first 2D version aren't compatible with this one, so the server starts a fresh
+world the first time it runs this version.

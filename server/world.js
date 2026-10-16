@@ -1,19 +1,30 @@
-// Authoritative world state. The universe itself is generated on demand from the seed; this
-// class owns only the player-made deltas on top of it, the online players, and the rules.
+// Authoritative world state. The universe is generated on demand from the seed; this owns the
+// player-made changes on top of it, the online pilots, and the rules. Bigger systems live in
+// their own modules: accounts, parties, combat, planet surfaces and the story director.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { generateSector, findAsteroid, sectorOf, sectorKey, SECTOR_SIZE } from '../shared/universe.js';
+import {
+  generateSector, findAsteroid, findPlanet, sectorOf, sectorKey, effectiveOre, SECTOR_SIZE, FAR_REACH, STARTER_PLANET_ID,
+} from '../shared/universe.js';
 import { hashString } from '../shared/rng.js';
 import {
-  ORES, ORE_IDS, BLOCKS, UPGRADES, GRID, BUILD_RANGE, DOCK_RANGE, JUMP_COOLDOWN_MS, ASTEROID_REGROW_MS,
-  shipStats, cargoTotal, canAfford, upgradeCost,
+  ORES, ORE_IDS, BLOCKS, UPGRADES, SHIP_PARTS, STARTER_SHIP, WORLD_GRID, BUILD_RANGE, DOCK_RANGE, JUMP_COOLDOWN_MS,
+  ASTEROID_REGROW_MS, INVENTORY_SIZE, shipStats, validateShip, cargoTotal, canAfford, upgradeCost, qNormalize,
 } from '../shared/rules.js';
+import { makeItem, itemName, itemValue, shopStock } from '../shared/items.js';
+import { TUTORIAL } from '../shared/tutorial.js';
+import { goalTarget } from '../shared/story.js';
+import { Accounts } from './accounts.js';
+import { Parties } from './party.js';
+import { Combat } from './combat.js';
+import { Surfaces } from './surface.js';
+import { StoryDirector } from './story.js';
 
 const TICK_MS = 100;
 const SAVE_MS = 15000;
-const NAME_RE = /^[A-Za-z0-9_\- ]{2,16}$/;
+const SAVE_VERSION = 2;
 const num = (v) => typeof v === 'number' && Number.isFinite(v);
 
 export class World {
@@ -21,10 +32,15 @@ export class World {
     this.seed = seed;
     this.dataFile = dataFile;
     this.log = log;
-    this.conns = new Set();
+    this.connSet = new Set();
     this.dirty = false;
-    this.data = { seed, asteroids: {}, blocks: {}, beacons: {}, players: {} };
+    this.data = { version: SAVE_VERSION, seed, asteroids: {}, blocks: {}, beacons: {}, players: {}, surfaces: {}, accounts: {}, sessions: {} };
     this.load();
+    this.accounts = new Accounts(this.data);
+    this.parties = new Parties(this);
+    this.story = new StoryDirector(this);
+    this.combat = new Combat(this);
+    this.surfaces = new Surfaces(this);
   }
 
   // ---- persistence ------------------------------------------------------------------------
@@ -34,8 +50,9 @@ export class World {
     try {
       const d = JSON.parse(fs.readFileSync(this.dataFile, 'utf8'));
       if (d.seed !== this.seed) { this.log(`Save file has seed ${d.seed}; starting fresh for seed ${this.seed}`); return; }
+      if (d.version !== SAVE_VERSION) { this.log(`Save file is from an older version; starting a fresh world`); return; }
       Object.assign(this.data, d);
-      this.log(`Loaded world: ${Object.keys(d.players).length} pilots, ${Object.keys(d.blocks).length} built sectors`);
+      this.log(`Loaded world: ${Object.keys(d.accounts || {}).length} accounts`);
     } catch (e) {
       this.log('Could not read save file:', e.message);
     }
@@ -43,7 +60,7 @@ export class World {
 
   save() {
     if (!this.dataFile || !this.dirty) return;
-    for (const c of this.conns) if (c.player) this.storePlayer(c);
+    for (const c of this.connSet) if (c.player) this.storePlayer(c.player);
     fs.mkdirSync(path.dirname(this.dataFile), { recursive: true });
     const tmp = this.dataFile + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(this.data));
@@ -55,147 +72,217 @@ export class World {
     let last = Date.now();
     this.tickTimer = setInterval(() => {
       const now = Date.now();
-      this.tick(Math.min(0.25, (now - last) / 1000), now);
+      try { this.tick(Math.min(0.25, (now - last) / 1000), now); } catch (e) { this.log('tick error', e); }
       last = now;
     }, TICK_MS);
     this.saveTimer = setInterval(() => this.save(), SAVE_MS);
+    this.partyTimer = setInterval(() => this.parties.tick(), 1000);
   }
 
   stop() {
     clearInterval(this.tickTimer);
     clearInterval(this.saveTimer);
+    clearInterval(this.partyTimer);
     this.dirty = true;
     this.save();
   }
 
+  time() { return Date.now() / 1000; }
+
   // ---- connections ------------------------------------------------------------------------
 
   connect(send, kick) {
-    const conn = { id: crypto.randomUUID().slice(0, 8), send, kick, player: null, subs: new Set(), lastChat: 0, buildBudget: 20 };
-    this.conns.add(conn);
+    const conn = { id: crypto.randomUUID().slice(0, 8), send, kick, player: null, subs: new Set(), lastChat: 0, buildBudget: 20, seenShips: new Map(), authBusy: false, authFails: 0 };
+    this.connSet.add(conn);
     return conn;
   }
 
   disconnect(conn) {
-    if (!this.conns.delete(conn)) return;
+    if (!this.connSet.delete(conn)) return;
     if (conn.player) {
-      this.storePlayer(conn);
+      this.storePlayer(conn.player);
+      this.parties.dropped(conn.player.key);
       this.broadcast({ t: 'chat', from: null, text: `${conn.player.name} went dark.` });
     }
   }
 
-  storePlayer(conn) {
-    const p = conn.player;
-    const rec = this.data.players[p.name.toLowerCase()];
-    Object.assign(rec, { x: p.x, y: p.y, cargo: p.cargo, credits: p.credits, upg: p.upg });
-    this.dirty = true;
+  conns() { return [...this.connSet].filter((c) => c.player); }
+  players() { return this.conns().map((c) => c.player); }
+  connById(id) { for (const c of this.connSet) if (c.id === id && c.player) return c; return null; }
+  connByName(name) {
+    const k = String(name).toLowerCase();
+    for (const c of this.connSet) if (c.player && c.player.key === k) return c;
+    return null;
   }
 
   broadcast(msg, filter) {
-    for (const c of this.conns) if (c.player && (!filter || filter(c))) c.send(msg);
+    for (const c of this.connSet) if (c.player && (!filter || filter(c))) c.send(msg);
   }
 
   toSector(key, msg) {
-    this.broadcast(msg, (c) => c.subs.has(key));
+    this.broadcast(msg, (c) => c.player.mode === 'space' && c.subs.has(key));
+  }
+
+  toNear(x, z, msg) {
+    this.toSector(sectorKey(...sectorOf(x, z)), msg);
+  }
+
+  // ---- auth -------------------------------------------------------------------------------
+
+  async auth(conn, msg) {
+    if (conn.authBusy) return;
+    if (conn.authFails > 8) return conn.send({ t: 'error', auth: true, msg: 'Too many attempts. Reload and try again later.' });
+    conn.authBusy = true;
+    try {
+      let session;
+      if (msg.t === 'register') session = await this.accounts.register(msg.name, msg.password);
+      else if (msg.t === 'login') session = await this.accounts.login(msg.name, msg.password);
+      else {
+        session = this.accounts.resume(msg.token);
+        if (!session) throw new Error('Your session expired. Please sign in again.');
+      }
+      if (!this.connSet.has(conn)) return;
+      this.dirty = true;
+      conn.send({ t: 'auth', token: session.token, name: session.name });
+      this.join(conn, session.key, session.name);
+    } catch (e) {
+      conn.authFails++;
+      conn.send({ t: 'error', auth: true, resume: msg.t === 'resume', msg: e.message });
+    } finally {
+      conn.authBusy = false;
+    }
+  }
+
+  newRecord(name) {
+    const pistol = makeItem('weapon', 'pistol', 1);
+    return {
+      name, credits: 100, cargo: {}, ship: STARTER_SHIP.map((b) => [...b]), upg: {},
+      inv: { items: [pistol], equipped: { weapon: pistol.id } },
+      mode: 'surface', planet: STARTER_PLANET_ID, parked: null, tutorial: 0, tutCount: 0, home: '0,0:st', joined: Date.now(),
+    };
+  }
+
+  join(conn, key, name) {
+    for (const other of this.connSet) {
+      if (other !== conn && other.player?.key === key) {
+        other.send({ t: 'error', msg: 'You signed in somewhere else.' });
+        this.disconnect(other);
+        other.kick();
+      }
+    }
+    const rec = (this.data.players[key] ||= this.newRecord(name));
+    const p = conn.player = {
+      key, name: rec.name, color: `hsl(${hashString(key) % 360}, 80%, 62%)`,
+      credits: rec.credits, cargo: { ...rec.cargo }, ship: rec.ship.map((b) => [...b]), shipRev: 1, upg: { ...rec.upg },
+      inv: { items: rec.inv.items.map((i) => ({ ...i })), equipped: { ...rec.inv.equipped } },
+      tutorial: rec.tutorial || 0, tutCount: rec.tutCount || 0, home: rec.home || '0,0:st', kills: rec.kills || 0,
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
+      mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
+    };
+    this.restat(p);
+    p.hull = p.stats.hp;
+    p.shield = p.stats.shield;
+    this.surfaces.refreshVitals(p);
+    if (rec.mode === 'space') {
+      Object.assign(p, { mode: 'space', x: rec.x, y: rec.y, z: rec.z, q: rec.q || [0, 0, 0, 1] });
+    } else {
+      const pid = rec.parked?.planet || rec.planet || STARTER_PLANET_ID;
+      this.surfaces.place(conn, pid, rec.parked ? [rec.parked.x, rec.parked.z] : null);
+    }
+    conn.send({
+      t: 'welcome', id: conn.id, seed: this.seed, time: Date.now(),
+      you: this.selfView(p), beacons: Object.values(this.data.beacons), story: this.story.view(),
+    });
+    if (p.mode === 'surface') conn.send(this.surfaces.state(p.planet));
+    const party = this.parties.of(key);
+    if (party) this.parties.push(party);
+    this.broadcast({ t: 'chat', from: null, text: `${p.name} entered the void.` });
+  }
+
+  storePlayer(p) {
+    const rec = this.data.players[p.key];
+    Object.assign(rec, {
+      credits: p.credits, cargo: p.cargo, ship: p.ship, upg: p.upg, inv: p.inv, tutorial: p.tutorial, tutCount: p.tutCount,
+      home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
+      x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
+    });
+    this.dirty = true;
+  }
+
+  restat(p) {
+    p.stats = shipStats(p.ship, p.upg, this.story ? this.story.effects() : {});
+  }
+
+  selfView(p) {
+    return {
+      name: p.name, key: p.key, color: p.color, credits: p.credits, cargo: p.cargo, ship: p.ship, shipRev: p.shipRev, upg: p.upg,
+      inv: p.inv, stats: p.stats, hull: p.hull, shield: p.shield, hp: p.hp, maxHp: p.maxHp, armor: p.armor,
+      mode: p.mode, planet: p.planet, parked: p.parked, x: p.x, y: p.y, z: p.z, q: p.q, px: p.px, py: p.py, pz: p.pz,
+      tutorial: p.tutorial, tutCount: p.tutCount, home: p.home, kills: p.kills,
+    };
+  }
+
+  sendSelf(conn) {
+    conn.send({ t: 'you', ...this.selfView(conn.player) });
   }
 
   // ---- messages ---------------------------------------------------------------------------
 
   handle(conn, msg) {
     if (!conn.player) {
-      if (msg.t === 'hello') this.onHello(conn, msg);
+      if (msg.t === 'register' || msg.t === 'login' || msg.t === 'resume') this.auth(conn, msg);
       return;
     }
     const fn = this['on_' + msg.t];
     if (fn) fn.call(this, conn, msg);
   }
 
-  onHello(conn, { name, token }) {
-    if (typeof name !== 'string' || !NAME_RE.test(name.trim())) return conn.send({ t: 'error', msg: 'Pick a name of 2-16 letters, numbers, spaces, _ or -.' });
-    if (typeof token !== 'string' || token.length < 16 || token.length > 128) return conn.send({ t: 'error', msg: 'Bad session token.' });
-    name = name.trim();
-    const key = name.toLowerCase();
-    let rec = this.data.players[key];
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    if (rec && rec.tokenHash !== tokenHash) return conn.send({ t: 'error', msg: 'That name belongs to another pilot.' });
-    if (!rec) {
-      const a = Math.random() * Math.PI * 2;
-      const home = generateSector(0, 0, this.seed).station;
-      rec = this.data.players[key] = {
-        name, tokenHash, x: home.x + Math.cos(a) * 400, y: home.y + Math.sin(a) * 400,
-        cargo: {}, credits: 0, upg: {}, joined: Date.now(),
-      };
-      this.dirty = true;
-    }
-    for (const other of this.conns) {
-      if (other !== conn && other.player && other.player.name.toLowerCase() === key) {
-        other.send({ t: 'error', msg: 'You signed in somewhere else.' });
-        this.disconnect(other);
-        other.kick();
-      }
-    }
-    conn.player = {
-      name: rec.name, x: rec.x, y: rec.y, vx: 0, vy: 0, a: 0, thrust: false,
-      cargo: { ...rec.cargo }, credits: rec.credits, upg: { ...rec.upg },
-      color: `hsl(${hashString(key) % 360} 80% 62%)`,
-      mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0,
-    };
-    conn.send({
-      t: 'welcome', id: conn.id, seed: this.seed, time: Date.now(),
-      you: this.selfView(conn.player), beacons: Object.values(this.data.beacons),
-    });
-    this.broadcast({ t: 'chat', from: null, text: `${rec.name} entered the void.` });
+  on_logout(conn, { token }) {
+    if (typeof token === 'string') this.accounts.logout(token);
+    this.dirty = true;
   }
 
-  selfView(p) {
-    return { name: p.name, x: p.x, y: p.y, cargo: p.cargo, credits: p.credits, upg: p.upg, color: p.color };
-  }
-
-  sendSelf(conn) {
-    const p = conn.player;
-    conn.send({ t: 'you', cargo: p.cargo, credits: p.credits, upg: p.upg });
-  }
-
-  teleport(conn, x, y) {
-    const p = conn.player;
-    Object.assign(p, { x, y, vx: 0, vy: 0, mining: null, lastPos: Date.now() });
-    conn.send({ t: 'teleport', x, y });
-  }
-
-  // Movement is simulated by the client for responsiveness; the server checks it is plausible.
+  // Space movement is simulated by the client for responsiveness; the server checks it.
   on_state(conn, m) {
-    if (![m.x, m.y, m.vx, m.vy, m.a].every(num)) return;
     const p = conn.player;
+    if (p.mode !== 'space' || p.dead || ![m.x, m.y, m.z, m.vx, m.vy, m.vz].every(num) || !Array.isArray(m.q) || !m.q.every(num)) return;
     const now = Date.now();
-    const stats = shipStats(p.upg);
     const dt = Math.max(0.05, (now - p.lastPos) / 1000);
-    const allowed = stats.maxSpeed * dt * 1.35 + 80;
-    if (Math.hypot(m.x - p.x, m.y - p.y) > allowed) {
-      this.teleport(conn, p.x, p.y);
+    const allowed = p.stats.maxSpeed * dt * 1.35 + 80;
+    if (Math.hypot(m.x - p.x, m.y - p.y, m.z - p.z) > allowed) {
+      conn.send({ t: 'teleport', mode: 'space', x: p.x, y: p.y, z: p.z });
+      p.lastPos = now;
       return;
     }
-    const sp = Math.hypot(m.vx, m.vy), k = sp > stats.maxSpeed ? stats.maxSpeed / sp : 1;
-    Object.assign(p, { x: m.x, y: m.y, vx: m.vx * k, vy: m.vy * k, a: m.a, thrust: !!m.thrust, lastPos: now });
+    const sp = Math.hypot(m.vx, m.vy, m.vz), k = sp > p.stats.maxSpeed ? p.stats.maxSpeed / sp : 1;
+    Object.assign(p, { x: m.x, y: m.y, z: m.z, vx: m.vx * k, vy: m.vy * k, vz: m.vz * k, q: qNormalize(m.q), thrust: !!m.thrust, lastPos: now });
   }
 
+  on_walk(conn, m) { this.surfaces.walk(conn, m); }
+  on_shoot(conn, m) { this.surfaces.shoot(conn, m); }
+  on_dig(conn, m) { this.surfaces.dig(conn, m); }
+  on_sbuild(conn, m) { this.surfaces.build(conn, m); }
+  on_sunbuild(conn, m) { this.surfaces.unbuild(conn, m); }
+  on_interact(conn, m) { this.surfaces.interact(conn, m); }
+  on_land(conn, { planet }) { if (typeof planet === 'string') this.surfaces.land(conn, planet); }
+  on_fire(conn) { this.combat.fire(conn); }
+
   on_sub(conn, { keys }) {
-    if (!Array.isArray(keys)) return;
-    const [psx, psy] = sectorOf(conn.player.x, conn.player.y);
+    if (!Array.isArray(keys) || conn.player.mode !== 'space') return;
+    const [psx, psz] = sectorOf(conn.player.x, conn.player.z);
     const want = new Set();
     for (const k of keys.slice(0, 16)) {
       const m = /^(-?\d+),(-?\d+)$/.exec(String(k));
-      if (m && Math.abs(+m[1] - psx) <= 1 && Math.abs(+m[2] - psy) <= 1) want.add(sectorKey(+m[1], +m[2]));
+      if (m && Math.abs(+m[1] - psx) <= 1 && Math.abs(+m[2] - psz) <= 1) want.add(sectorKey(+m[1], +m[2]));
     }
-    for (const k of want) {
-      if (!conn.subs.has(k)) conn.send(this.sectorState(k));
-    }
+    for (const k of want) if (!conn.subs.has(k)) conn.send(this.sectorState(k));
     conn.subs = want;
   }
 
   sectorState(key) {
-    const [sx, sy] = key.split(',').map(Number);
+    const [sx, sz] = key.split(',').map(Number);
     const asteroids = {};
-    for (const a of generateSector(sx, sy, this.seed).asteroids) {
+    for (const a of generateSector(sx, sz, this.seed).asteroids) {
       const amt = this.asteroidAmount(a);
       if (amt !== a.amount) asteroids[a.id] = Math.ceil(amt);
     }
@@ -210,27 +297,31 @@ export class World {
   }
 
   on_mine(conn, { id }) {
-    conn.player.mining = typeof id === 'string' ? id : null;
+    conn.player.mining = typeof id === 'string' && conn.player.mode === 'space' ? id : null;
   }
 
-  on_build(conn, { gx, gy, block }) {
+  on_build(conn, { gx, gy, gz, block }) {
     const p = conn.player;
     const def = BLOCKS[block];
-    if (!def || !Number.isInteger(gx) || !Number.isInteger(gy)) return;
+    if (p.mode !== 'space' || !def || ![gx, gy, gz].every(Number.isInteger)) return;
     if (conn.buildBudget <= 0) return;
     conn.buildBudget--;
-    const cx = (gx + 0.5) * GRID, cy = (gy + 0.5) * GRID;
-    if (Math.hypot(cx - p.x, cy - p.y) > BUILD_RANGE) return conn.send({ t: 'toast', msg: 'Too far away to build there.' });
-    const [sx, sy] = sectorOf(cx, cy);
-    const key = sectorKey(sx, sy), cell = `${gx},${gy}`;
+    const cx = (gx + 0.5) * WORLD_GRID, cy = (gy + 0.5) * WORLD_GRID, cz = (gz + 0.5) * WORLD_GRID;
+    if (Math.hypot(cx - p.x, cy - p.y, cz - p.z) > BUILD_RANGE) return conn.send({ t: 'toast', msg: 'Too far away to build there.' });
+    const [sx, sz] = sectorOf(cx, cz);
+    const key = sectorKey(sx, sz), cell = `${gx},${gy},${gz}`;
     const blocks = (this.data.blocks[key] ||= {});
     if (blocks[cell]) return;
-    if (this.blockedByNature(sx, sy, cx, cy)) return conn.send({ t: 'toast', msg: 'Something is in the way.' });
+    const s = generateSector(sx, sz, this.seed);
+    if ((s.star && Math.hypot(cx - s.star.x, cy - s.star.y, cz - s.star.z) < s.star.r + 150) ||
+        (s.station && Math.hypot(cx - s.station.x, cy - s.station.y, cz - s.station.z) < 260)) {
+      return conn.send({ t: 'toast', msg: 'Something is in the way.' });
+    }
     if (!canAfford(p.cargo, def.cost)) return conn.send({ t: 'toast', msg: `Not enough ore for ${def.name}.` });
     for (const [k, v] of Object.entries(def.cost)) p.cargo[k] -= v;
     blocks[cell] = { b: block, o: p.name };
     if (def.beacon) {
-      const beacon = { id: `${key}:${cell}`, sx, sy, x: cx, y: cy, owner: p.name, at: Date.now() };
+      const beacon = { id: `${key}:${cell}`, sx, sz, x: cx, y: cy, z: cz, owner: p.name, at: Date.now() };
       this.data.beacons[beacon.id] = beacon;
       this.broadcast({ t: 'beacon', beacon });
     }
@@ -239,20 +330,13 @@ export class World {
     this.toSector(key, { t: 'block', key, cell, data: blocks[cell] });
   }
 
-  blockedByNature(sx, sy, x, y) {
-    const s = generateSector(sx, sy, this.seed);
-    if (s.star && Math.hypot(x - s.star.x, y - s.star.y) < s.star.r + 120) return true;
-    if (s.station && Math.hypot(x - s.station.x, y - s.station.y) < 220) return true;
-    return false;
-  }
-
-  on_unbuild(conn, { gx, gy }) {
+  on_unbuild(conn, { gx, gy, gz }) {
     const p = conn.player;
-    if (!Number.isInteger(gx) || !Number.isInteger(gy)) return;
-    const cx = (gx + 0.5) * GRID, cy = (gy + 0.5) * GRID;
-    if (Math.hypot(cx - p.x, cy - p.y) > BUILD_RANGE) return;
-    const [sx, sy] = sectorOf(cx, cy);
-    const key = sectorKey(sx, sy), cell = `${gx},${gy}`;
+    if (p.mode !== 'space' || ![gx, gy, gz].every(Number.isInteger)) return;
+    const cx = (gx + 0.5) * WORLD_GRID, cy = (gy + 0.5) * WORLD_GRID, cz = (gz + 0.5) * WORLD_GRID;
+    if (Math.hypot(cx - p.x, cy - p.y, cz - p.z) > BUILD_RANGE) return;
+    const [sx, sz] = sectorOf(cx, cz);
+    const key = sectorKey(sx, sz), cell = `${gx},${gy},${gz}`;
     const blk = this.data.blocks[key]?.[cell];
     if (!blk) return;
     if (blk.o !== p.name) return conn.send({ t: 'toast', msg: `That belongs to ${blk.o}.` });
@@ -268,15 +352,38 @@ export class World {
     this.toSector(key, { t: 'block', key, cell, data: null });
   }
 
+  // ---- stations -----------------------------------------------------------------------------
+
   dockedStation(p) {
-    const [sx, sy] = sectorOf(p.x, p.y);
-    const st = generateSector(sx, sy, this.seed).station;
-    return st && Math.hypot(st.x - p.x, st.y - p.y) <= DOCK_RANGE ? st : null;
+    if (p.mode !== 'space' || p.dead) return null;
+    const [sx, sz] = sectorOf(p.x, p.z);
+    const st = generateSector(sx, sz, this.seed).station;
+    return st && Math.hypot(st.x - p.x, st.y - p.y, st.z - p.z) <= DOCK_RANGE ? st : null;
+  }
+
+  needDock(conn) {
+    const st = this.dockedStation(conn.player);
+    if (!st) conn.send({ t: 'toast', msg: 'Dock at a station first.' });
+    return st;
+  }
+
+  on_dock(conn) {
+    const p = conn.player;
+    const st = this.needDock(conn);
+    if (!st) return;
+    p.home = st.id;
+    p.hull = p.stats.hp;
+    p.shield = p.stats.shield;
+    const eff = this.story.effects();
+    const gate = eff.gateBuilt && (st.id === '0,0:st' || st.id === `${FAR_REACH[0]},${FAR_REACH[1]}:st`);
+    this.sendSelf(conn);
+    conn.send({ t: 'docked', station: { id: st.id, name: st.name, richness: st.richness }, gate, wants: ORE_IDS.filter((o) => this.story.wants(o) > 0) });
+    this.tutorial(conn, 'dock');
   }
 
   on_sell(conn) {
     const p = conn.player;
-    if (!this.dockedStation(p)) return conn.send({ t: 'toast', msg: 'Dock at a station to trade.' });
+    if (!this.needDock(conn)) return;
     let earned = 0;
     for (const k of ORE_IDS) { earned += (p.cargo[k] || 0) * ORES[k].price; p.cargo[k] = 0; }
     p.credits += earned;
@@ -285,111 +392,395 @@ export class World {
     conn.send({ t: 'toast', msg: earned ? `Sold cargo for ${earned} credits.` : 'Your hold is empty.' });
   }
 
+  on_contribute(conn) {
+    if (!this.needDock(conn)) return;
+    this.story.contribute(conn);
+    this.dirty = true;
+  }
+
   on_upgrade(conn, { kind }) {
     const p = conn.player;
     const def = UPGRADES[kind];
-    if (!def) return;
-    if (!this.dockedStation(p)) return conn.send({ t: 'toast', msg: 'Dock at a station to upgrade.' });
+    if (!def || !this.needDock(conn)) return;
     const lvl = p.upg[kind] || 0;
     if (lvl >= def.max) return conn.send({ t: 'toast', msg: `${def.name} is maxed out.` });
     const cost = upgradeCost(lvl);
     if (p.credits < cost) return conn.send({ t: 'toast', msg: `Need ${cost} credits.` });
     p.credits -= cost;
     p.upg[kind] = lvl + 1;
+    this.restat(p);
     this.dirty = true;
     this.sendSelf(conn);
     conn.send({ t: 'toast', msg: `${def.name} upgraded to level ${lvl + 1}.` });
   }
 
-  on_jump(conn, { sx, sy }) {
+  // Ship editing: at a station's shipyard, or on the ground next to your parked ship.
+  on_ship_save(conn, { blocks }) {
     const p = conn.player;
-    if (!Number.isInteger(sx) || !Number.isInteger(sy)) return;
+    const atYard = this.dockedStation(p) || (p.mode === 'surface' && p.parked && Math.hypot(p.px - p.parked.x, p.pz - p.parked.z) < 25);
+    if (!atYard) return conn.send({ t: 'toast', msg: 'Edit your ship at a station or standing next to it.' });
+    const err = validateShip(blocks);
+    if (err) return conn.send({ t: 'toast', msg: err });
+    const count = (list) => list.reduce((m, b) => { m[b[3]] = (m[b[3]] || 0) + 1; return m; }, {});
+    const before = count(p.ship), after = count(blocks);
+    const need = {};
+    for (const t of Object.keys(SHIP_PARTS)) {
+      const d = (after[t] || 0) - (before[t] || 0);
+      for (const [ore, v] of Object.entries(SHIP_PARTS[t].cost)) need[ore] = (need[ore] || 0) + d * v;
+    }
+    const cargo = { ...p.cargo };
+    for (const [ore, v] of Object.entries(need)) cargo[ore] = (cargo[ore] || 0) - v;
+    const short = Object.entries(cargo).filter(([, v]) => v < 0).map(([k, v]) => `${-v} ${ORES[k].name}`);
+    if (short.length) return conn.send({ t: 'toast', msg: `Need ${short.join(', ')} more.` });
+    for (const k of Object.keys(cargo)) if (cargo[k] === 0) delete cargo[k];
+    p.cargo = cargo;
+    p.ship = blocks.map((b) => [b[0], b[1], b[2], b[3]]);
+    p.shipRev++;
+    this.restat(p);
+    p.hull = p.stats.hp;
+    p.shield = p.stats.shield;
+    this.dirty = true;
+    this.sendSelf(conn);
+    conn.send({ t: 'toast', msg: 'Ship rebuilt.' });
+  }
+
+  openShop(conn, id, richness, name) {
+    const day = Math.floor(Date.now() / 86400000);
+    conn.shop = { id, richness, day };
+    conn.send({ t: 'shop', id, name, stock: shopStock(id, richness, day) });
+  }
+
+  on_shop(conn) {
+    const st = this.needDock(conn);
+    if (st) this.openShop(conn, st.id, st.richness, st.name);
+  }
+
+  shopValid(conn) {
+    const p = conn.player;
+    if (!conn.shop) return false;
+    if (conn.shop.id === 'haven-landing') return p.mode === 'surface' && p.planet === STARTER_PLANET_ID;
+    return this.dockedStation(p)?.id === conn.shop.id;
+  }
+
+  on_buy(conn, { slot }) {
+    const p = conn.player;
+    if (!this.shopValid(conn)) return;
+    const item = shopStock(conn.shop.id, conn.shop.richness, conn.shop.day)[slot];
+    if (!item) return;
+    if (p.credits < item.price) return conn.send({ t: 'toast', msg: `Need ${item.price} credits.` });
+    if (p.inv.items.length >= INVENTORY_SIZE) return conn.send({ t: 'toast', msg: 'Your inventory is full.' });
+    p.credits -= item.price;
+    const it = makeItem(item.kind, item.type, item.tier);
+    p.inv.items.push(it);
+    this.dirty = true;
+    this.sendSelf(conn);
+    conn.send({ t: 'toast', msg: `Bought ${itemName(it)}.` });
+  }
+
+  on_sell_item(conn, { id }) {
+    const p = conn.player;
+    if (!this.shopValid(conn)) return conn.send({ t: 'toast', msg: 'Sell gear at a shop.' });
+    const i = p.inv.items.findIndex((it) => it.id === id);
+    if (i < 0) return;
+    const [it] = p.inv.items.splice(i, 1);
+    for (const [slot, eid] of Object.entries(p.inv.equipped)) if (eid === id) delete p.inv.equipped[slot];
+    const value = Math.round(itemValue(it) * 0.5);
+    p.credits += value;
+    this.surfaces.refreshVitals(p);
+    this.dirty = true;
+    this.sendSelf(conn);
+    conn.send({ t: 'toast', msg: `Sold ${itemName(it)} for ${value} cr.` });
+  }
+
+  on_equip(conn, { id }) {
+    const p = conn.player;
+    const it = p.inv.items.find((i) => i.id === id);
+    if (!it) return;
+    p.inv.equipped[it.kind === 'weapon' ? 'weapon' : it.type] = it.id;
+    this.surfaces.refreshVitals(p);
+    this.sendSelf(conn);
+  }
+
+  on_unequip(conn, { slot }) {
+    const p = conn.player;
+    if (typeof slot !== 'string') return;
+    delete p.inv.equipped[slot];
+    this.surfaces.refreshVitals(p);
+    this.sendSelf(conn);
+  }
+
+  on_drop(conn, { id }) {
+    const p = conn.player;
+    const i = p.inv.items.findIndex((it) => it.id === id);
+    if (i < 0) return;
+    p.inv.items.splice(i, 1);
+    for (const [slot, eid] of Object.entries(p.inv.equipped)) if (eid === id) delete p.inv.equipped[slot];
+    this.surfaces.refreshVitals(p);
+    this.sendSelf(conn);
+  }
+
+  giveItem(conn, item) {
+    const p = conn.player;
+    if (p.inv.items.length >= INVENTORY_SIZE) {
+      const v = Math.round(itemValue(item) * 0.5);
+      p.credits += v;
+      conn.send({ t: 'toast', msg: `Inventory full: salvaged ${itemName(item)} for ${v} cr.` });
+    } else {
+      p.inv.items.push(item);
+      conn.send({ t: 'loot', item, name: itemName(item) });
+    }
+    this.dirty = true;
+    this.sendSelf(conn);
+  }
+
+  // ---- travel -------------------------------------------------------------------------------
+
+  arrivalPoint(sx, sz) {
+    const s = generateSector(sx, sz, this.seed);
+    if (s.station) return [s.station.x + 300, s.station.y + 60, s.station.z];
+    if (s.star) return [s.star.x + s.star.r + 800, 0, s.star.z];
+    return [(sx + 0.5) * SECTOR_SIZE, 0, (sz + 0.5) * SECTOR_SIZE];
+  }
+
+  teleport(conn, x, y, z) {
+    const p = conn.player;
+    Object.assign(p, { x, y, z, vx: 0, vy: 0, vz: 0, mining: null, lastPos: Date.now() });
+    conn.send({ t: 'teleport', mode: 'space', x, y, z });
+  }
+
+  on_jump(conn, { sx, sz }) {
+    const p = conn.player;
+    if (p.mode !== 'space' || p.dead || !Number.isInteger(sx) || !Number.isInteger(sz)) return;
     const now = Date.now();
     if (now - p.lastJump < JUMP_COOLDOWN_MS) return conn.send({ t: 'toast', msg: 'Jump drive is still charging.' });
-    const [csx, csy] = sectorOf(p.x, p.y);
-    const dist = Math.max(Math.abs(sx - csx), Math.abs(sy - csy));
+    const [csx, csz] = sectorOf(p.x, p.z);
+    const dist = Math.max(Math.abs(sx - csx), Math.abs(sz - csz));
     if (dist === 0) return;
-    if (dist > shipStats(p.upg).jumpRange) return conn.send({ t: 'toast', msg: 'Out of jump range. Upgrade your jump drive.' });
+    if (dist > p.stats.jumpRange) return conn.send({ t: 'toast', msg: 'Out of jump range. Upgrade your jump drive.' });
     p.lastJump = now;
-    this.teleport(conn, ...this.arrivalPoint(sx, sy));
+    this.teleport(conn, ...this.arrivalPoint(sx, sz));
+    conn.send({ t: 'jumped', at: now });
+  }
+
+  // Party warp: jump straight to a party member anywhere in space.
+  on_warp(conn, { name }) {
+    const p = conn.player;
+    const t = this.connByName(name);
+    if (p.mode !== 'space' || p.dead || !t || !this.parties.sameParty(p.key, t.player.key)) return;
+    if (t.player.mode !== 'space') return conn.send({ t: 'toast', msg: `${t.player.name} is on a planet.` });
+    const now = Date.now();
+    if (now - p.lastWarp < 60000) return conn.send({ t: 'toast', msg: `Party warp recharging (${Math.ceil((60000 - (now - p.lastWarp)) / 1000)}s).` });
+    p.lastWarp = now;
+    p.lastJump = now;
+    this.teleport(conn, t.player.x + 200, t.player.y + 40, t.player.z + 200);
     conn.send({ t: 'jumped', at: now });
   }
 
   on_wormhole(conn) {
     const p = conn.player;
-    const [sx, sy] = sectorOf(p.x, p.y);
-    const wh = generateSector(sx, sy, this.seed).wormhole;
-    if (!wh || Math.hypot(wh.x - p.x, wh.y - p.y) > wh.r + 40) return;
-    this.teleport(conn, ...this.arrivalPoint(wh.tx, wh.ty));
-    conn.send({ t: 'toast', msg: `The wormhole spits you out ${Math.round(Math.hypot(wh.tx - sx, wh.ty - sy))} sectors away.` });
+    if (p.mode !== 'space') return;
+    const [sx, sz] = sectorOf(p.x, p.z);
+    const wh = generateSector(sx, sz, this.seed).wormhole;
+    if (!wh || Math.hypot(wh.x - p.x, wh.y - p.y, wh.z - p.z) > wh.r + 60) return;
+    this.teleport(conn, ...this.arrivalPoint(wh.tx, wh.tz));
+    conn.send({ t: 'toast', msg: `The wormhole spits you out ${Math.round(Math.hypot(wh.tx - sx, wh.tz - sz))} sectors away.` });
   }
 
-  arrivalPoint(sx, sy) {
-    const s = generateSector(sx, sy, this.seed);
-    let x = (sx + 0.5) * SECTOR_SIZE, y = (sy + 0.5) * SECTOR_SIZE;
-    if (s.star) { x = s.star.x + s.star.r + 700; y = s.star.y; }
-    return [x, y];
+  on_gate(conn) {
+    const st = this.needDock(conn);
+    if (!st || !this.story.effects().gateBuilt) return;
+    if (st.id === '0,0:st') {
+      this.teleport(conn, ...this.arrivalPoint(...FAR_REACH));
+      conn.send({ t: 'toast', msg: 'The Ancient Gate carries you to the Far Reach.' });
+    } else if (st.id === `${FAR_REACH[0]},${FAR_REACH[1]}:st`) {
+      this.teleport(conn, ...this.arrivalPoint(0, 0));
+      conn.send({ t: 'toast', msg: 'The Gate carries you home to Haven.' });
+    }
   }
 
-  on_chat(conn, { text }) {
+  respawnInSpace(conn) {
+    const p = conn.player;
+    const m = /^(-?\d+),(-?\d+):st$/.exec(p.home || '');
+    const st = m ? generateSector(+m[1], +m[2], this.seed).station : null;
+    const s = st || generateSector(0, 0, this.seed).station;
+    p.mode = 'space';
+    p.hull = p.stats.hp;
+    p.shield = p.stats.shield;
+    p.q = [0, 0, 0, 1];
+    this.teleport(conn, s.x + 260, s.y + 40, s.z);
+    this.sendSelf(conn);
+  }
+
+  // ---- social -------------------------------------------------------------------------------
+
+  on_chat(conn, { text, channel }) {
     if (typeof text !== 'string') return;
     text = text.trim().slice(0, 200);
     const now = Date.now();
     if (!text || now - conn.lastChat < 700) return;
     conn.lastChat = now;
+    if (text.startsWith('/') && this.isAdmin(conn.player)) return this.adminCommand(conn, text);
+    if (channel === 'party') return this.parties.chat(conn, text);
     this.broadcast({ t: 'chat', from: conn.player.name, color: conn.player.color, text });
   }
 
-  // ---- simulation -------------------------------------------------------------------------
+  // Admins are listed by name in the ADMIN environment variable (comma-separated).
+  isAdmin(p) {
+    const list = (process.env.ADMIN || '').toLowerCase().split(',').map((s) => s.trim()).filter(Boolean);
+    return list.includes(p.key);
+  }
+
+  adminCommand(conn, text) {
+    const [cmd, ...args] = text.slice(1).split(/\s+/);
+    const p = conn.player;
+    const reply = (msg) => conn.send({ t: 'chat', from: null, text: msg });
+    switch (cmd) {
+      case 'spawn': {
+        const kind = args[0] || 'pirate';
+        if (p.mode !== 'space' || !['pirate', 'hollow'].includes(kind)) return reply('Usage (in space): /spawn pirate|hollow [count]');
+        for (let i = 0; i < Math.min(10, Number(args[1]) || 1); i++) this.combat.spawnNpc(kind, p.x + (Math.random() - 0.5) * 600, p.y, p.z - 700 + (Math.random() - 0.5) * 300, 1.5);
+        return reply(`Spawned ${kind}.`);
+      }
+      case 'tp': {
+        const sx = parseInt(args[0], 10), sz = parseInt(args[1], 10);
+        if (p.mode !== 'space' || !Number.isInteger(sx) || !Number.isInteger(sz)) return reply('Usage (in space): /tp <sectorX> <sectorZ>');
+        return this.teleport(conn, ...this.arrivalPoint(sx, sz));
+      }
+      case 'give': {
+        const ore = args[0], n = Math.min(100000, Number(args[1]) || 100);
+        if (!ORES[ore]) return reply(`Usage: /give <${ORE_IDS.join('|')}> [amount]`);
+        p.cargo[ore] = (p.cargo[ore] || 0) + n;
+        this.sendSelf(conn);
+        return reply(`Gave ${n} ${ore}.`);
+      }
+      case 'credits':
+        p.credits += Math.min(1e7, Number(args[0]) || 1000);
+        this.sendSelf(conn);
+        return reply('Credits added.');
+      case 'story': {
+        const goal = this.story.activeGoals().find((g) => (this.story.s.progress[g.id] || 0) < goalTarget(g, this.story.s.era, this.story.s.scale));
+        if (!goal) return reply('No active goal.');
+        this.story.add(goal.id, Number(args[0]) || 1e6, p.name);
+        return reply(`Advanced "${goal.label}".`);
+      }
+      case 'land': {
+        const [sx, sz] = sectorOf(p.x, p.z);
+        const pl = generateSector(sx, sz, this.seed).planets.find((x) => x.landable);
+        if (p.mode !== 'space' || !pl) return reply('No landable planet in this sector.');
+        this.surfaces.place(conn, pl.id);
+        conn.send({ t: 'teleport', mode: 'surface', planet: pl.id, x: p.px, y: p.py, z: p.pz });
+        this.sendSelf(conn);
+        return reply(`Landed on ${pl.name}.`);
+      }
+      case 'heal':
+        p.hull = p.stats.hp; p.shield = p.stats.shield; p.hp = p.maxHp;
+        this.sendSelf(conn);
+        return reply('Healed.');
+      default:
+        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /heal');
+    }
+  }
+
+  on_party_invite(conn, { name }) { if (typeof name === 'string') this.parties.invite(conn, name); }
+  on_party_accept(conn) { this.parties.accept(conn); }
+  on_party_decline(conn) { this.parties.decline(conn); }
+  on_party_leave(conn) { this.parties.leave(conn); }
+  on_party_kick(conn, { name }) { this.parties.kick(conn, name); }
+
+  tutorial(conn, event, n = 1) {
+    const p = conn.player;
+    const step = TUTORIAL[p.tutorial];
+    if (!step || step.event !== event) return;
+    if (step.count) {
+      p.tutCount += n;
+      if (p.tutCount < step.count) { conn.send({ t: 'you', tutCount: p.tutCount }); return; }
+    }
+    p.tutorial++;
+    p.tutCount = 0;
+    p.credits += 60;
+    if (p.tutorial >= TUTORIAL.length) {
+      p.credits += 300;
+      this.giveItem(conn, makeItem('weapon', 'rifle', 1));
+      conn.send({ t: 'toast', msg: 'Training complete: +300 cr and a rifle. The galaxy is yours.' });
+    }
+    this.dirty = true;
+    this.sendSelf(conn);
+  }
+
+  onStoryChanged() {
+    for (const c of this.conns()) {
+      this.restat(c.player);
+      this.sendSelf(c);
+    }
+  }
+
+  // ---- simulation ---------------------------------------------------------------------------
 
   tick(dt, now) {
+    this.mineTick(dt, now);
+    this.combat.tick(dt, now);
+    this.surfaces.tick(dt, now);
+    this.story.tick(now);
+    this.snapshots(now);
+  }
+
+  mineTick(dt, now) {
     const changed = new Map();
-    for (const c of this.conns) {
-      if (!c.player) continue;
+    const eff = this.story.effects();
+    for (const c of this.conns()) {
       c.buildBudget = Math.min(20, c.buildBudget + 1);
       const p = c.player;
-      if (!p.mining) continue;
+      if (!p.mining || p.mode !== 'space' || p.dead) continue;
       const a = findAsteroid(p.mining, this.seed);
-      const stats = shipStats(p.upg);
-      if (!a || Math.hypot(a.x - p.x, a.y - p.y) > stats.mineRange + a.r) { p.mining = null; continue; }
+      if (!a || Math.hypot(a.x - p.x, a.y - p.y, a.z - p.z) > p.stats.mineRange + a.r) { p.mining = null; continue; }
       const left = this.asteroidAmount(a);
-      const space = stats.cargo - cargoTotal(p.cargo);
+      const space = p.stats.cargo - cargoTotal(p.cargo);
       if (left <= 0 || space <= 0) {
-        if (space <= 0 && now - (c.lastFullToast || 0) > 3000) {
-          c.lastFullToast = now;
-          c.send({ t: 'toast', msg: 'Cargo hold full. Sell at a station.' });
-        }
+        if (space <= 0 && now - (c.lastFullToast || 0) > 3000) { c.lastFullToast = now; c.send({ t: 'toast', msg: 'Cargo hold full. Sell at a station.' }); }
         p.mining = null;
         continue;
       }
-      const take = Math.min(stats.mineRate * dt, left);
+      const take = Math.min(p.stats.mineRate * dt, left);
       p.mineFrac += take;
       const whole = Math.min(Math.floor(p.mineFrac), space);
       if (whole > 0) {
         p.mineFrac -= whole;
-        p.cargo[a.ore] = (p.cargo[a.ore] || 0) + whole;
+        const ore = effectiveOre(a, eff);
+        p.cargo[ore] = (p.cargo[ore] || 0) + whole;
         this.sendSelf(c);
+        this.tutorial(c, 'mine', whole);
       }
       this.data.asteroids[a.id] = { amt: Math.max(0, left - take), t: now };
       if (Math.ceil(left) !== Math.ceil(left - take)) changed.set(a.id, a);
       this.dirty = true;
     }
-    for (const [id, a] of changed) {
-      const [sx, sy] = sectorOf(a.x, a.y);
-      this.toSector(sectorKey(sx, sy), { t: 'ast', id, amt: Math.ceil(this.data.asteroids[id].amt) });
-    }
+    for (const [id, a] of changed) this.toNear(a.x, a.z, { t: 'ast', id, amt: Math.ceil(this.data.asteroids[id].amt) });
+  }
 
-    // Snapshots: each pilot sees the others in the sectors they are subscribed to.
-    const all = [...this.conns].filter((c) => c.player);
+  snapshots(now) {
+    const all = this.conns();
+    const online = all.length;
     for (const c of all) {
-      const players = [];
-      for (const o of all) {
-        const p = o.player;
-        const [sx, sy] = sectorOf(p.x, p.y);
-        if (o === c || !c.subs.has(sectorKey(sx, sy))) continue;
-        players.push({ id: o.id, name: p.name, color: p.color, x: p.x, y: p.y, vx: p.vx, vy: p.vy, a: p.a, thrust: p.thrust, mining: p.mining });
+      const me = c.player;
+      const ships = {};
+      const needShip = (p) => {
+        if (c.seenShips.get(p.key) !== p.shipRev) { ships[p.key] = p.ship; c.seenShips.set(p.key, p.shipRev); }
+      };
+      if (me.mode === 'space') {
+        const players = [];
+        for (const o of all) {
+          const p = o.player;
+          if (o === c || p.mode !== 'space' || p.dead || !c.subs.has(sectorKey(...sectorOf(p.x, p.z)))) continue;
+          needShip(p);
+          players.push({ id: o.id, key: p.key, name: p.name, color: p.color, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, q: p.q, thrust: p.thrust, mining: p.mining, hull: p.hull, maxHull: p.stats.hp, rev: p.shipRev });
+        }
+        c.send({ t: 'snap', time: now, mode: 'space', players, npcs: this.combat.npcsIn(c.subs), ships, online, mining: me.mining });
+      } else {
+        const s = this.surfaces.snapshot(c);
+        for (const pk of s.parked) { const oc = this.connByName(pk.key); if (oc) needShip(oc.player); }
+        c.send({ t: 'snap', time: now, mode: 'surface', ...s, ships, online });
       }
-      c.send({ t: 'snap', time: now, players, online: all.length, mining: c.player.mining });
     }
   }
 }
+

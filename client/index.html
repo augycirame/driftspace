@@ -5,60 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Driftspace</title>
   <link rel="stylesheet" href="style.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
 </head>
 <body>
   <canvas id="game"></canvas>
+  <canvas id="marks"></canvas>
+  <div id="crosshair" hidden></div>
 
   <div id="login" class="overlay">
     <div class="card">
       <h1>DRIFTSPACE</h1>
       <p class="sub">An endless galaxy, shared with everyone in it.</p>
-      <input id="name" maxlength="16" placeholder="Pilot name" autocomplete="off" spellcheck="false">
-      <button id="play">Launch</button>
+      <input id="name" maxlength="16" placeholder="Pilot name" autocomplete="username" spellcheck="false">
+      <input id="password" type="password" maxlength="128" placeholder="Password (6+ characters)" autocomplete="current-password">
+      <div class="row2">
+        <button id="signin">Sign in</button>
+        <button id="register" class="alt">Create pilot</button>
+      </div>
       <p id="login-error" class="error"></p>
+      <p class="small dim">New pilots start on Haven, the starter planet.</p>
     </div>
   </div>
 
   <div id="hud" hidden>
     <div id="status" class="panel"></div>
+    <div id="objective" class="panel"></div>
     <div id="cargo" class="panel"></div>
+    <canvas id="radar" width="180" height="180"></canvas>
+    <div id="party-hud" class="panel" hidden></div>
+    <div id="vitals" class="panel"></div>
+    <div id="prompt"></div>
     <div id="hint" class="panel small"></div>
     <div id="palette" class="panel" hidden></div>
     <div id="chat">
       <div id="chat-log"></div>
-      <input id="chat-input" maxlength="200" placeholder="Say something to the galaxy…" hidden>
+      <input id="chat-input" maxlength="200" placeholder="Say something… (start with /p for party chat)" hidden>
     </div>
     <div id="toasts"></div>
+    <div id="invite" class="panel" hidden></div>
   </div>
 
-  <div id="station" class="overlay" hidden>
+  <div id="transmission" hidden>
+    <div class="bar top"></div>
+    <div class="tx"><div class="tx-title"></div><div class="tx-body"></div><div class="small dim">Click or press Enter to continue</div></div>
+    <div class="bar bottom"></div>
+  </div>
+
+  <div id="death" class="overlay" hidden><div class="card"><h2 id="death-title">Destroyed</h2><p id="death-body"></p></div></div>
+
+  <div id="panel" class="overlay" hidden>
     <div class="card wide">
-      <h2 id="station-name">Station</h2>
-      <div id="station-body"></div>
-      <p class="small dim">Press E or Esc to undock.</p>
+      <div class="panel-head"><h2 id="panel-title"></h2><button id="panel-close" class="x">✕</button></div>
+      <div id="panel-body"></div>
     </div>
   </div>
 
-  <div id="help" class="overlay" hidden>
-    <div class="card wide">
-      <h2>Flight manual</h2>
-      <table>
-        <tr><td>W / ↑</td><td>Thrust</td></tr>
-        <tr><td>A D / ← →</td><td>Turn</td></tr>
-        <tr><td>S / ↓</td><td>Brake</td></tr>
-        <tr><td>Space (hold)</td><td>Mine the nearest asteroid in range</td></tr>
-        <tr><td>E</td><td>Dock at a station: sell ore, buy upgrades</td></tr>
-        <tr><td>B</td><td>Build mode: click to place, right-click to salvage, 1-6 pick a block</td></tr>
-        <tr><td>M</td><td>Galaxy map: click a sector in range to hyperspace jump there</td></tr>
-        <tr><td>Mouse wheel</td><td>Zoom</td></tr>
-        <tr><td>Enter</td><td>Chat</td></tr>
-        <tr><td>H</td><td>This manual</td></tr>
-      </table>
-      <p class="small">Ore gets richer the farther you fly from Haven. Wormholes fling you hundreds of
-        sectors away. Beacons you build show up on everyone's galaxy map. The galaxy never ends.</p>
-      <p class="small dim">Press H or Esc to close.</p>
+  <div id="yard" class="overlay" hidden>
+    <div id="yard-wrap">
+      <canvas id="yard-canvas"></canvas>
+      <div id="yard-side">
+        <h2>Shipyard</h2>
+        <div id="yard-parts"></div>
+        <div id="yard-info"></div>
+        <div class="row2">
+          <button id="yard-save">Save ship</button>
+          <button id="yard-reset" class="alt">Reset</button>
+        </div>
+        <button id="yard-cancel" class="alt">Close</button>
+      </div>
     </div>
   </div>
+
+  <canvas id="map" hidden></canvas>
 
   <script type="module" src="main.js"></script>
 </body>

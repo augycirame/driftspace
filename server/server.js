@@ -20,6 +20,7 @@ function serveStatic(req, res) {
   let rel = decodeURIComponent(url.pathname);
   let base = path.join(ROOT, 'client');
   if (rel.startsWith('/shared/')) { base = path.join(ROOT, 'shared'); rel = rel.slice('/shared'.length); }
+  else if (rel.startsWith('/vendor/')) { base = path.join(ROOT, 'node_modules', 'three', 'build'); rel = rel.slice('/vendor'.length); }
   if (rel === '/') rel = '/index.html';
   const file = path.resolve(base, '.' + rel);
   if (!file.startsWith(base + path.sep)) { res.writeHead(403).end(); return; }

@@ -17,6 +17,10 @@ services:
         value: "1337"
       - key: DATA_FILE
         value: /var/data/world.json
+      # Your pilot name(s), comma-separated, to unlock admin chat commands. Set it in the
+      # Render dashboard (Environment tab); it isn't stored in this file.
+      - key: ADMIN
+        sync: false
     disk:
       name: world
       mountPath: /var/data
