@@ -197,12 +197,17 @@ function onMessage(m) {
     case 'beacon': if (m.removed) S.beacons.delete(m.removed); else S.beacons.set(m.beacon.id, m.beacon); break;
     case 'surface':
       if (!S.connected) break;
-      surface.enter(m.planet, { digs: m.digs, blocks: m.blocks, deposits: m.deposits });
+      surface.enter(m.planet, { digs: m.digs, blocks: m.blocks, deposits: m.deposits, looted: m.looted });
       surface.selfArmorKey = Math.round((S.you.armor?.armor || 0) / 20);
       if (S.you.mode === 'surface') S.me = { x: S.you.px, y: S.you.py, z: S.you.pz, yaw: 0 };
       break;
     case 'dig': if (surface.planetId === m.planet) surface.applyDig(m.k, m.d); break;
     case 'deposit': surface.applyDeposit(m.id, m.amt); break;
+    case 'looted': if (surface.planetId === m.planet) surface.looted.add(m.id); break;
+    case 'codex':
+      S.you.codex = [...new Set([...(S.you.codex || []), ...m.keys])];
+      ui.discovered(m.keys);
+      break;
     case 'sblock': if (surface.planetId === m.planet) surface.applyBlock(m.cell, m.data); break;
     case 'teleport':
       S.dead = false;
@@ -324,6 +329,7 @@ addEventListener('keydown', (e) => {
   if (k === 'j') { ui.current?.kind === 'journal' ? ui.close() : ui.journal(); return; }
   if (k === 'p') { ui.current?.kind === 'party' ? ui.close() : ui.party(); return; }
   if (k === 'h') { ui.current?.kind === 'help' ? ui.close() : ui.help(); return; }
+  if (k === 'k') { ui.current?.kind === 'codex' ? ui.close() : ui.codex(); return; }
   if (k === 'm') { map.toggle(); return; }
   if (overlayOpen()) return;
   keys.add(k);
@@ -337,7 +343,7 @@ addEventListener('keydown', (e) => {
       if (p) send({ t: 'land', planet: p.id }); else ui.toast('No planet close enough to land on.');
     }
   } else {
-    if (k === 'e') { const it = surface.interaction(); if (it) send({ t: 'interact', what: it.what }); }
+    if (k === 'e') { const it = surface.interaction(); if (it) send({ t: 'interact', what: it.what, id: it.id }); }
     if (k === 'y') { const it = surface.interaction(); if (it?.what === 'ship') ui.onShipyard(); else ui.toast('Walk up to your ship to use the shipyard.'); }
     if (k === 'v') surface.firstPerson = !surface.firstPerson;
   }
@@ -427,7 +433,7 @@ function spaceFrame(dt, now) {
     for (const { mesh } of rec.planets) dots.push(dot(mesh.position.x, mesh.position.z, '#9fd0a0', 5));
     if (rec.s.star) dots.push(dot(rec.s.star.x, rec.s.star.z, '#ffe08a', 7));
   }
-  for (const n of S.npcs.values()) dots.push(dot(n.x, n.z, n.kind === 'pirate' ? '#ff5a4a' : n.kind === 'hollow' ? '#9aff6a' : '#d06aff', n.kind === 'mothership' ? 9 : 4));
+  for (const n of S.npcs.values()) dots.push(dot(n.x, n.z, { pirate: '#ff5a4a', hollow: '#9aff6a', mothership: '#d06aff', imperial: '#ffe08a', rebel: '#ff8a5a' }[n.kind], n.kind === 'mothership' ? 9 : 4));
   for (const o of S.others.values()) dots.push(dot(o.x, o.z, o.color, 4));
   ui.radar(radarCtx, dots);
 
@@ -481,7 +487,8 @@ function surfaceFrame(dt, now) {
   const dot = (x, z, c, s) => { const dx = (x - me.x) / R, dz = (z - me.z) / R; return { x: dx * cos - dz * sin, y: dx * sin + dz * cos, c, s }; };
   const dots = [];
   for (const d of deposits(surface.planet)) if ((surface.data.deposits[d.id] ?? d.amount) > 0) dots.push(dot(d.x, d.z, ORES[d.ore].color, 4));
-  for (const c of S.creatures.values()) dots.push(dot(c.x, c.z, '#ff5a4a', 4));
+  for (const c of S.creatures.values()) dots.push(dot(c.x, c.z, c.hostile ? '#ff5a4a' : '#e8e0a0', 4));
+  for (const { st, def } of surface.structures || []) dots.push(dot(st.x, st.z, def.kind === 'shrine' ? '#c27bff' : def.kind === 'imperial' || def.kind === 'holy' ? '#ffe08a' : def.kind === 'rebel' ? '#ff8a5a' : '#b8a8d8', 6));
   for (const o of S.others.values()) dots.push(dot(o.x, o.z, o.color, 4));
   if (you.parked) dots.push(dot(you.parked.x, you.parked.z, '#7fb4ff', 7));
   if (surface.relic) dots.push(dot(surface.relic.position.x, surface.relic.position.z, '#c27bff', 7));
@@ -501,7 +508,10 @@ function drawMarks() {
   const targets = [];
   for (const n of S.npcs.values()) {
     const d = Math.hypot(n.x - me.x, n.y - me.y, n.z - me.z);
-    if (d < (n.kind === 'mothership' ? 9000 : 3500)) targets.push({ x: n.x, y: n.y, z: n.z, d, c: n.kind === 'pirate' ? '#ff5a4a' : n.kind === 'hollow' ? '#9aff6a' : '#d06aff', big: n.kind === 'mothership' });
+    if (d > (n.kind === 'mothership' ? 9000 : 3500)) continue;
+    const c = { pirate: '#ff5a4a', hollow: '#9aff6a', mothership: '#d06aff', imperial: '#ffe08a', rebel: '#ff8a5a' }[n.kind];
+    if (!n.hostile && (n.kind === 'imperial' || n.kind === 'rebel')) { if (d < 1500) targets.push({ x: n.x, y: n.y, z: n.z, d, c: c + '88', name: n.kind === 'imperial' ? 'Imperial' : 'Rebel' }); continue; }
+    targets.push({ x: n.x, y: n.y, z: n.z, d, c, big: n.kind === 'mothership' });
   }
   for (const o of S.others.values()) {
     if (!S.isPartyMember(o.key)) continue;

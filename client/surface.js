@@ -4,11 +4,14 @@
 import * as THREE from 'three';
 import { findPlanet } from '/shared/universe.js';
 import {
-  CELL, VERTS, SURFACE_HALF, SETTLEMENT, profileOf, creatureOf, vertexHeight, heightAt, standHeight, deposits, floraFor,
+  CELL, VERTS, SURFACE_HALF, SETTLEMENT, profileOf, vertexHeight, heightAt, standHeight, deposits, floraFor, structuresOf, structureBase,
 } from '/shared/planet.js';
 import { ORES, BLOCKS, SURFACE_GRID } from '/shared/rules.js';
 import { PLAYER_SPEED, RUN_SPEED } from '/shared/items.js';
-import { buildShip, buildPerson, buildCreature, label, healthBar, setHealth, glowSprite } from './meshes.js';
+import { buildShip, buildPerson, buildCreature, buildStructure, label, healthBar, setHealth, glowSprite } from './meshes.js';
+import { CREATURES } from '/shared/content/creatures.js';
+import { STRUCTURES } from '/shared/content/structures.js';
+import { GODS } from '/shared/content/factions.js';
 import { FX } from './fx.js';
 
 const HALF_V = (VERTS - 1) / 2;
@@ -49,7 +52,8 @@ export class SurfaceView {
     const planet = findPlanet(pid, this.S.seed);
     this.planet = planet;
     this.planetId = pid;
-    this.data = data;   // { digs, blocks, deposits }
+    this.data = data;   // { digs, blocks, deposits, looted }
+    this.looted = new Set(data.looted || []);
     const prof = profileOf(planet);
     const sc = this.scene;
     sc.background = new THREE.Color(prof.sky);
@@ -78,6 +82,7 @@ export class SurfaceView {
     this.buildDeposits();
     if (planet.starter) this.buildSettlement();
     this.buildRelic();
+    this.buildStructures();
     this.blocks = new THREE.Group();
     this.root.add(this.blocks);
     for (const [cell, blk] of Object.entries(data.blocks)) this.addBlock(cell, blk);
@@ -184,18 +189,42 @@ export class SurfaceView {
     };
     const water = prof.water ?? -999;
     const dry = items.filter((f) => heightAt(this.planet, f.x, f.z, this.data.digs) > water + 0.5);
-    const kind = prof.flora;
-    if (kind === 'tree' || kind === 'palm') {
-      const trunk = new THREE.MeshStandardMaterial({ color: '#5a4030', roughness: 1 });
-      const leaf = new THREE.MeshStandardMaterial({ color: kind === 'palm' ? '#3a9a4a' : this.planet.starter ? '#3aaa6a' : '#2f7a3a', roughness: 0.9, flatShading: true });
-      place(new THREE.CylinderGeometry(0.25, 0.4, kind === 'palm' ? 7 : 5, 6), trunk, dry, kind === 'palm' ? 3.5 : 2.5);
-      place(kind === 'palm' ? new THREE.ConeGeometry(2.6, 1.2, 7) : new THREE.IcosahedronGeometry(2.4, 0), leaf, dry, kind === 'palm' ? 7.2 : 5.8);
-    } else if (kind === 'rock') {
-      place(new THREE.DodecahedronGeometry(1.4, 0), new THREE.MeshStandardMaterial({ color: prof.mid, roughness: 1, flatShading: true }), dry, 0.6, 0.7);
-    } else if (kind === 'spike') {
-      place(new THREE.ConeGeometry(0.8, 5, 5), new THREE.MeshStandardMaterial({ color: '#cfefff', roughness: 0.2, metalness: 0.1, transparent: true, opacity: 0.85 }), dry, 2.4);
-    } else if (kind === 'cactus') {
-      place(new THREE.CylinderGeometry(0.45, 0.5, 3.4, 8), new THREE.MeshStandardMaterial({ color: '#4a7a3a', roughness: 0.9 }), dry, 1.7);
+    const wet = items.filter((f) => heightAt(this.planet, f.x, f.z, this.data.digs) <= water + 0.5);
+    const of = (kind, list = dry) => list.filter((f) => f.kind === kind);
+    const M = (opts) => new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true, ...opts });
+    const trunk = M({ color: '#5a4030', roughness: 1 });
+    const leafColor = this.planet.holy ? '#6aaa4a' : this.planet.starter ? '#3aaa6a' : '#2f7a3a';
+    place(new THREE.CylinderGeometry(0.25, 0.4, 5, 6), trunk, of('tree'), 2.5);
+    place(new THREE.IcosahedronGeometry(2.4, 0), M({ color: leafColor }), of('tree'), 5.8);
+    place(new THREE.CylinderGeometry(0.2, 0.3, 7, 6), trunk, of('palm'), 3.5);
+    place(new THREE.ConeGeometry(2.6, 1.2, 7), M({ color: '#3a9a4a' }), of('palm'), 7.2);
+    place(new THREE.DodecahedronGeometry(1.4, 0), M({ color: prof.mid, roughness: 1 }), of('rock'), 0.6, 0.7);
+    place(new THREE.ConeGeometry(0.8, 5, 5), M({ color: '#cfefff', roughness: 0.2, transparent: true, opacity: 0.85 }), of('spike'), 2.4);
+    place(new THREE.CylinderGeometry(0.45, 0.5, 3.4, 8), M({ color: '#4a7a3a' }), of('cactus'), 1.7);
+    place(new THREE.CylinderGeometry(0.35, 0.5, 4, 8), M({ color: '#d8c8e8' }), of('mushroom'), 2);
+    place(new THREE.SphereGeometry(2.6, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.6, 1), M({ color: '#9a5ad8', emissive: '#6a2aa8', emissiveIntensity: 0.5 }), of('mushroom'), 3.9);
+    place(new THREE.OctahedronGeometry(1, 0).scale(0.6, 2.4, 0.6), M({ color: '#c8b8ff', emissive: '#8a6aff', emissiveIntensity: 0.5, roughness: 0.2, transparent: true, opacity: 0.9 }), of('crystal'), 2.2);
+    place(new THREE.TorusGeometry(2.4, 0.25, 6, 12, Math.PI).rotateY(Math.PI / 2), M({ color: '#e8dcc8' }), of('bone'), 0.2);
+    place(new THREE.CylinderGeometry(0.08, 0.1, 3, 4), M({ color: '#6a8a3a' }), [...of('reed'), ...of('reed', wet)], 1.3);
+    place(new THREE.CylinderGeometry(0.15, 0.35, 5, 5), M({ color: '#3a3430', roughness: 1 }), of('deadtree'), 2.4);
+    place(new THREE.IcosahedronGeometry(1.1, 0).scale(1, 1.6, 1), M({ color: '#ff8a9a', emissive: '#a03a5a', emissiveIntensity: 0.3 }), [...of('coral'), ...of('coral', wet)], 0.6);
+  }
+
+  // Ruins, shrines, faction bases and wrecks from the content library.
+  buildStructures() {
+    this.structures = [];
+    for (const st of structuresOf(this.planet)) {
+      const def = STRUCTURES[st.type];
+      const god = st.god ? GODS[st.god] : null;
+      const mesh = buildStructure(def, god?.color);
+      mesh.position.set(st.x, structureBase(this.planet, st), st.z);
+      mesh.rotation.y = st.rot;
+      const top = Math.max(...def.parts.map((p) => p[2] + (p[0] === 'box' || p[0] === 'cyl' || p[0] === 'cone' ? (p[5] || 0) / 2 : p[4] || 0)));
+      const lb = label(god ? `${def.name}: ${god.name.split(',')[0]}` : def.name, god ? god.color : def.kind === 'imperial' || def.kind === 'holy' ? '#ffe08a' : def.kind === 'rebel' ? '#ff9a7a' : '#d9c8ff', 0.85);
+      lb.position.y = top + 4;
+      mesh.add(lb);
+      this.root.add(mesh);
+      this.structures.push({ st, def, mesh });
     }
   }
 
@@ -404,16 +433,22 @@ export class SurfaceView {
   }
 
   updateCreatures(t) {
-    const def = creatureOf(this.planet);
     const seen = new Set();
     for (const c of this.S.creatures.values()) {
       seen.add(c.id);
       let v = this.creatures.get(c.id);
       if (!v) {
-        const group = buildCreature(def.color, c.size, c.id.length * 31 + c.id.charCodeAt(1));
+        const def = CREATURES[c.sp] || CREATURES.rockCrawler;
+        const group = buildCreature(def.color, c.size, c.id.length * 31 + c.id.charCodeAt(1), def.shape);
+        const tall = def.shape === 'golem' ? 3 : def.shape === 'flyer' ? 2.5 : 2;
         const bar = healthBar(0.035);
-        bar.position.y = c.size * 2 + 0.6;
+        bar.position.y = c.size * tall + 0.6;
         group.add(bar);
+        if (def.faction || def.behavior === 'guardian') {
+          const lb = label(def.name, def.faction === 'empire' ? '#ffe08a' : def.faction === 'rebellion' ? '#ff9a7a' : '#d9a8ff', 0.7);
+          lb.position.y = c.size * tall + 1.2;
+          group.add(lb);
+        }
         v = { group, bar, phase: Math.random() * 6 };
         this.creatures.set(c.id, v);
         this.root.add(group);
@@ -422,7 +457,11 @@ export class SurfaceView {
       v.group.rotation.y = c.yaw + Math.PI;
       setHealth(v.bar, c.hp / c.maxHp);
       v.bar.visible = c.hp < c.maxHp;
-      v.group.userData.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 8 + v.phase + i * Math.PI) * 0.5; });
+      const ud = v.group.userData;
+      if (ud.flap) ud.legs.forEach((l, i) => { l.rotation.z = Math.sin(t * 10 + v.phase) * 0.6 * (i ? 1 : -1); });
+      else if (ud.wiggle) ud.legs.forEach((l, i) => { l.position.x = Math.sin(t * 5 + v.phase + i * 0.9) * 0.3 * c.size; });
+      else if (ud.pulse) ud.legs.forEach((l) => { l.scale.y = c.size * 0.8 * (1 + Math.sin(t * 4 + v.phase) * 0.12); });
+      else ud.legs.forEach((l, i) => { l.rotation.x = Math.sin(t * 8 + v.phase + i * Math.PI) * 0.5; });
     }
     for (const [id, v] of this.creatures) if (!seen.has(id)) { this.root.remove(v.group); this.creatures.delete(id); }
   }
@@ -513,6 +552,14 @@ export class SurfaceView {
     if (this.planet.starter && near(SETTLEMENT.vendor.x, SETTLEMENT.vendor.z, 7)) return { what: 'vendor', text: `E: trade with ${SETTLEMENT.vendor.name}` };
     if (this.relic && near(this.relic.position.x, this.relic.position.z, 7)) return { what: 'relic', text: this.relic.userData.site.found ? 'The relic is awake.' : 'E: awaken the Precursor Relic' };
     if (parked && parked.planet === this.planetId && near(parked.x, parked.z, 14)) return { what: 'ship', text: 'E: board ship and take off · Y: shipyard' };
+    for (const { st, def } of this.structures || []) {
+      if (!near(st.x, st.z, st.radius + 6)) continue;
+      if (def.kind === 'shrine') return { what: 'structure', id: st.id, text: `E: pray to ${GODS[st.god].name}` };
+      if (st.type === 'cathedral') return { what: 'structure', id: st.id, text: 'E: enter the Cathedral of the Radiant Throne' };
+      if (!def.cache) return { what: 'structure', id: st.id, text: `E: examine the ${def.name}` };
+      if (this.looted.has(st.id)) return { what: 'structure', id: st.id, text: `${def.name} (already searched)` };
+      return { what: 'structure', id: st.id, text: `E: search the ${def.name}` };
+    }
     return null;
   }
 }

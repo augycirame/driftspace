@@ -1,9 +1,9 @@
 // Space combat: blaster bolts, pirate and Hollow NPC ships, the Hive Mothership, damage,
 // destruction, bounties and loot. All of it is decided here on the server.
 
-import { generateSector, sectorOf, sectorKey, isSafe, SECTOR_SIZE } from '../shared/universe.js';
+import { generateSector, sectorOf, sectorKey, isSafe, territoryOf, SECTOR_SIZE } from '../shared/universe.js';
 import { qRotate, forwardOf, segmentDistance, SHIP_BLOCK } from '../shared/rules.js';
-import { randomItem } from '../shared/items.js';
+import { randomItem, makeRelic } from '../shared/items.js';
 import { eraScale } from '../shared/story.js';
 
 const BOLT_SPEED = 1500;
@@ -14,6 +14,27 @@ export const NPC_KINDS = {
   pirate:     { name: 'Pirate',          hp: 80,  dmg: 4,  speed: 360, radius: 14, interval: 1.1, bounty: 40,  color: '#ff5a4a' },
   hollow:     { name: 'Hollow',          hp: 110, dmg: 5,  speed: 420, radius: 16, interval: 1.0, bounty: 60,  color: '#b0ff6a' },
   mothership: { name: 'Hive Mothership', hp: 6000, dmg: 16, speed: 0,  radius: 170, interval: 0.6, bounty: 6000, color: '#d06aff' },
+  imperial:   { name: 'Imperial patrol', hp: 130, dmg: 5,  speed: 380, radius: 15, interval: 1.0, bounty: 70,  color: '#ffe08a', faction: 'empire', relic: 'imperialSeal' },
+  rebel:      { name: 'Rebel raider',    hp: 100, dmg: 5,  speed: 430, radius: 14, interval: 0.9, bounty: 60,  color: '#ff6a4a', faction: 'rebellion', relic: 'martyrsBadge' },
+};
+
+// Who fights whom among the NPCs: the Empire and the rebels are at war, the Empire polices
+// pirates, and the Hollow attack everyone.
+const ENEMIES = {
+  imperial: ['rebel', 'pirate', 'hollow'],
+  rebel: ['imperial', 'hollow'],
+  pirate: ['imperial'],
+  hollow: ['imperial', 'rebel'],
+  mothership: ['imperial', 'rebel'],
+};
+const enemies = (a, b) => ENEMIES[a]?.includes(b);
+
+// Reputation for destroying each kind of ship.
+const KILL_REP = {
+  imperial: { empire: -10, rebellion: 6 },
+  rebel: { rebellion: -10, empire: 6 },
+  pirate: { empire: 2, rebellion: 1 },
+  hollow: { empire: 3, rebellion: 3 },
 };
 
 let nextId = 1;
@@ -69,6 +90,7 @@ export class Combat {
       hp, maxHp: kind === 'mothership' ? this.w.story.mothership().maxHp : hp,
       dmg: def.dmg * k, speed: def.speed * (0.9 + Math.random() * 0.2), radius: def.radius,
       richness, lastFire: 0, lastNear: Date.now(), home: [x, y, z], wander: null, damagers: new Set(),
+      faction: def.faction || null, aggro: new Set(),
     };
     this.npcs.set(npc.id, npc);
     return npc;
@@ -84,15 +106,26 @@ export class Combat {
       const [sx, sz] = sectorOf(p.x, p.z);
       const safe = isSafe(sx, sz);
       const rich = generateSector(sx, sz, this.w.seed).region.richness;
-      let pirates = 0, hollow = 0;
+      const near = { pirate: 0, hollow: 0, imperial: 0, rebel: 0 };
       for (const n of this.npcs.values()) {
         if (Math.hypot(n.x - p.x, n.z - p.z) > 6000) continue;
-        if (n.kind === 'pirate') pirates++; else if (n.kind === 'hollow') hollow++;
+        if (n.kind in near) near[n.kind]++;
       }
-      if (!safe && pirates < Math.min(5, 1 + Math.floor(rich / 2)) && Math.random() < 0.22) {
+      const territory = territoryOf(sx, sz, this.w.seed);
+      const lawful = territory === 'empire' || territory === 'capital';
+      if (!safe && !lawful && near.pirate < Math.min(5, 1 + Math.floor(rich / 2)) && Math.random() < (territory === 'wilds' ? 0.22 : 0.08)) {
         this.spawnGroup('pirate', p, 1 + Math.floor(Math.random() * 3), rich);
       }
-      if (eff.invasion && hollow < (safe ? 2 : 4) && Math.random() < 0.3) {
+      // Imperial patrols in imperial space (a strong guard at the holy capital); rebel raiders
+      // on the frontier, where the Empire pushes in too and the two sides fight.
+      if (lawful && near.imperial < (territory === 'capital' ? 6 : 3) && Math.random() < 0.3) {
+        this.spawnGroup('imperial', p, 1 + Math.floor(Math.random() * 3), territory === 'capital' ? rich + 4 : rich);
+      }
+      if (territory === 'rebellion') {
+        if (near.rebel < 3 && Math.random() < 0.3) this.spawnGroup('rebel', p, 1 + Math.floor(Math.random() * 3), rich);
+        if (near.imperial < 2 && Math.random() < 0.15) this.spawnGroup('imperial', p, 1 + Math.floor(Math.random() * 2), rich);
+      }
+      if (eff.invasion && near.hollow < (safe ? 2 : 4) && Math.random() < 0.3) {
         this.spawnGroup('hollow', p, 1 + Math.floor(Math.random() * (safe ? 2 : 3)), rich);
       }
     }
@@ -129,8 +162,14 @@ export class Combat {
       if (n.kind === 'mothership') { this.mothershipTick(n, space, now); continue; }
       let target = null, best = 3500;
       for (const p of space) {
+        if (!this.hostileToPlayer(n, p)) continue;
         const d = Math.hypot(p.x - n.x, p.y - n.y, p.z - n.z);
         if (d < best) { best = d; target = p; }
+      }
+      for (const o of this.npcs.values()) {
+        if (!enemies(n.kind, o.kind)) continue;
+        const d = Math.hypot(o.x - n.x, o.y - n.y, o.z - n.z);
+        if (d < best) { best = d; target = o; }
       }
       let dx, dy, dz;
       if (target) {
@@ -148,7 +187,7 @@ export class Combat {
           const ax = target.x + target.vx * lead - n.x, ay = target.y + target.vy * lead - n.y, az = target.z + target.vz * lead - n.z;
           const al = Math.hypot(ax, ay, az) || 1, sp = 0.07;
           const ux = ax / al + (Math.random() - 0.5) * sp, uy = ay / al + (Math.random() - 0.5) * sp, uz = az / al + (Math.random() - 0.5) * sp;
-          this.spawnBolt({ owner: n.id, npc: true, x: n.x, y: n.y, z: n.z, vx: ux * BOLT_SPEED, vy: uy * BOLT_SPEED, vz: uz * BOLT_SPEED, dmg: n.dmg, color: def.color });
+          this.spawnBolt({ owner: n.id, npc: true, side: n.kind, faction: n.faction, targetKey: target.key || null, x: n.x, y: n.y, z: n.z, vx: ux * BOLT_SPEED, vy: uy * BOLT_SPEED, vz: uz * BOLT_SPEED, dmg: n.dmg, color: def.color });
         }
       } else {
         if (!n.wander || Math.hypot(n.wander[0] - n.x, n.wander[2] - n.z) < 100) {
@@ -165,6 +204,13 @@ export class Combat {
     }
   }
 
+  // Pirates and the Hollow attack every pilot; faction ships only attack their enemies and
+  // anyone who shot at them.
+  hostileToPlayer(n, p) {
+    if (!n.faction) return true;
+    return this.w.hostileTo(n.faction, p) || n.aggro.has(p.key);
+  }
+
   mothershipTick(n, space, now) {
     n.f = [Math.cos(now / 20000), 0, Math.sin(now / 20000)];
     const near = space.filter((p) => Math.hypot(p.x - n.x, p.y - n.y, p.z - n.z) < 2600)
@@ -175,7 +221,7 @@ export class Combat {
         const a = Math.random() * Math.PI * 2;
         const ox = n.x + Math.cos(a) * 120, oy = n.y + (Math.random() - 0.5) * 60, oz = n.z + Math.sin(a) * 120;
         const tx = t.x - ox, ty = t.y - oy, tz = t.z - oz, d = Math.hypot(tx, ty, tz) || 1;
-        this.spawnBolt({ owner: n.id, npc: true, x: ox, y: oy, z: oz, vx: (tx / d) * BOLT_SPEED * 0.8, vy: (ty / d) * BOLT_SPEED * 0.8, vz: (tz / d) * BOLT_SPEED * 0.8, dmg: n.dmg, color: '#d06aff', life: 2 });
+        this.spawnBolt({ owner: n.id, npc: true, side: 'mothership', x: ox, y: oy, z: oz, vx: (tx / d) * BOLT_SPEED * 0.8, vy: (ty / d) * BOLT_SPEED * 0.8, vz: (tz / d) * BOLT_SPEED * 0.8, dmg: n.dmg, color: '#d06aff', life: 2 });
       }
     }
     if (near.length && (!n.lastBrood || now - n.lastBrood > 15000)) {
@@ -208,8 +254,14 @@ export class Combat {
         for (const c of players) {
           const p = c.player;
           if (p.mode !== 'space' || p.dead) continue;
+          if (b.faction && !(this.w.hostileTo(b.faction, p) || b.targetKey === p.key)) continue;
           const [d, t] = segmentDistance(a, e, [p.x, p.y, p.z]);
           if (d < p.stats.radius && t < bestT) { bestT = t; hit = { conn: c }; }
+        }
+        for (const n of this.npcs.values()) {
+          if (n.id === b.owner || !enemies(b.side, n.kind)) continue;
+          const [d, t] = segmentDistance(a, e, [n.x, n.y, n.z]);
+          if (d < n.radius && t < bestT) { bestT = t; hit = { npc: n }; }
         }
       } else {
         const owner = this.w.connById(b.owner.slice(2))?.player;
@@ -241,8 +293,12 @@ export class Combat {
 
   damageNpc(n, dmg, ownerId, at) {
     if (!this.npcs.has(n.id)) return;
-    const conn = this.w.connById(ownerId.slice(2));
-    if (conn) n.damagers.add(conn.player.key);
+    const conn = ownerId.startsWith('p:') ? this.w.connById(ownerId.slice(2)) : null;
+    if (conn) {
+      n.damagers.add(conn.player.key);
+      // Shooting a faction ship brings its whole squad down on you.
+      if (n.faction) for (const o of this.npcs.values()) if (o.faction === n.faction && Math.hypot(o.x - n.x, o.z - n.z) < 3000) o.aggro.add(conn.player.key);
+    }
     if (n.kind === 'mothership') n.hp = this.w.story.damageMothership(dmg);
     else n.hp -= dmg;
     this.w.toNear(at.x, at.z, { t: 'hit', id: n.id, x: at.x, y: at.y, z: at.z, dmg: Math.round(dmg) });
@@ -250,6 +306,7 @@ export class Combat {
     this.npcs.delete(n.id);
     const def = NPC_KINDS[n.kind];
     this.w.toNear(n.x, n.z, { t: 'boom', x: n.x, y: n.y, z: n.z, size: n.radius });
+    if (n.faction) this.w.warScore(n.faction === 'empire' ? 'rebellion' : 'empire');
     if (!conn) return;
     const killer = conn.player;
     if (n.kind === 'mothership') {
@@ -261,6 +318,7 @@ export class Combat {
         this.w.sendSelf(c);
         c.send({ t: 'toast', msg: `Mothership bounty: +${share} cr` });
         this.w.giveItem(c, randomItem(6));
+        if (Math.random() < 0.3) this.w.giveItem(c, makeRelic('hiveCore'));
       }
       this.w.story.add('kill:mothership', 1, killer.name);
       this.w.broadcast({ t: 'chat', from: null, text: `${killer.name} landed the killing blow on the Hive Mothership!` });
@@ -274,7 +332,10 @@ export class Combat {
       const c = this.w.connByName(p.key);
       if (c) { this.w.sendSelf(c); c.send({ t: 'toast', msg: `${def.name} destroyed: +${share} cr${crew.length > 1 ? ' (party share)' : ''}` }); }
     }
-    if (Math.random() < 0.3) this.w.giveItem(conn, randomItem(n.richness));
+    const luck = 1 + (killer.buffs?.luck || 0);
+    if (Math.random() < 0.3 * luck) this.w.giveItem(conn, randomItem(n.richness));
+    if (def.relic && Math.random() < 0.05 * luck) this.w.giveItem(conn, makeRelic(def.relic));
+    if (KILL_REP[n.kind]) this.w.changeRep(conn, KILL_REP[n.kind]);
     killer.kills = (killer.kills || 0) + 1;
     if (n.kind === 'hollow') this.w.story.add('kill:hollow', 1, killer.name);
   }
@@ -340,11 +401,11 @@ export class Combat {
     }
   }
 
-  npcsIn(subs) {
+  npcsIn(subs, viewer) {
     const out = [];
     for (const n of this.npcs.values()) {
       if (!subs.has(sectorKey(...sectorOf(n.x, n.z)))) continue;
-      out.push({ id: n.id, kind: n.kind, x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz, f: n.f, hp: Math.max(0, n.hp), maxHp: n.maxHp });
+      out.push({ id: n.id, kind: n.kind, x: n.x, y: n.y, z: n.z, vx: n.vx, vy: n.vy, vz: n.vz, f: n.f, hp: Math.max(0, n.hp), maxHp: n.maxHp, hostile: viewer ? this.hostileToPlayer(n, viewer) : true });
     }
     return out;
   }

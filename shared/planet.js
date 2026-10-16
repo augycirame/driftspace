@@ -2,6 +2,10 @@
 // player digging stored as per-vertex height deltas and structures as blocks, both persisted.
 
 import { fbm, mulberry32, hash2, range } from './rng.js';
+import { TERRAINS, TERRAIN_IDS } from './content/terrains.js';
+import { CREATURES, CREATURE_IDS } from './content/creatures.js';
+import { STRUCTURES, STRUCTURE_IDS } from './content/structures.js';
+import { GODS, GOD_IDS } from './content/factions.js';
 
 export const SURFACE_HALF = 400;   // surface spans [-400, 400] on x and z
 export const CELL = 4;             // terrain vertex spacing
@@ -9,31 +13,157 @@ export const VERTS = (SURFACE_HALF * 2) / CELL + 1;
 export const MAX_DIG = 24;
 export const SETTLEMENT_RADIUS = 70;
 
-export const SURFACE_PROFILES = {
-  Rocky:  { amp: 42, rough: 9,  water: null, low: '#5e5249', mid: '#7d6c5f', high: '#a39383', sky: '#8a7f78', fog: '#9b8f86', liquid: null,      ore: [['iron', 6], ['copper', 3], ['gold', 1]], flora: 'rock',   creature: { name: 'Rock Crawler', color: '#7a6a58', hp: 50, dmg: 8, speed: 7, size: 1.3 } },
-  Ice:    { amp: 28, rough: 6,  water: -6,   low: '#9fc4d8', mid: '#d6ecf7', high: '#ffffff', sky: '#bcd7ea', fog: '#d4e6f2', liquid: '#7fb8d8', ore: [['ice', 7], ['iron', 2], ['voidstone', 0.3]], flora: 'spike', creature: { name: 'Frost Stalker', color: '#cfe8ff', hp: 60, dmg: 10, speed: 9, size: 1.2 } },
-  Lava:   { amp: 38, rough: 10, water: -8,   low: '#2a1a14', mid: '#3d2a22', high: '#5a4033', sky: '#5a2a1a', fog: '#6b3020', liquid: '#ff5a1a', ore: [['copper', 5], ['gold', 3], ['voidstone', 0.8]], flora: 'rock', creature: { name: 'Magma Hound', color: '#ff7a3a', hp: 80, dmg: 14, speed: 10, size: 1.4 } },
-  Ocean:  { amp: 30, rough: 5,  water: 4,    low: '#c9b98a', mid: '#4f8f4a', high: '#7a8a6a', sky: '#8fc4f0', fog: '#a9d2f2', liquid: '#2a6fb0', ore: [['ice', 4], ['iron', 3], ['copper', 2]], flora: 'palm', creature: { name: 'Reef Lurker', color: '#3fb0a0', hp: 55, dmg: 9, speed: 8, size: 1.2 } },
-  Jungle: { amp: 34, rough: 7,  water: -4,   low: '#3a5a2a', mid: '#3f7a3a', high: '#6a8a5a', sky: '#9fd0c0', fog: '#a8d8c0', liquid: '#2a7a6a', ore: [['iron', 5], ['copper', 3], ['gold', 1]], flora: 'tree', creature: { name: 'Vine Beast', color: '#5a9a3a', hp: 65, dmg: 11, speed: 8.5, size: 1.5 } },
-  Desert: { amp: 22, rough: 4,  water: null, low: '#c99a5b', mid: '#d8b27a', high: '#e8cf9a', sky: '#f0d8a8', fog: '#f0dcb0', liquid: null,      ore: [['iron', 4], ['gold', 2], ['copper', 2]], flora: 'cactus', creature: { name: 'Dune Skitter', color: '#c08a4a', hp: 45, dmg: 9, speed: 11, size: 1.1 } },
+// What a planet is like is drawn from the content library (shared/content): its terrain,
+// its wildlife and its structures. All of it is a pure function of the planet's seed.
+
+// Small bounded caches: generation is deterministic, so anything evicted is just rebuilt.
+const remember = (cache, key, value) => {
+  if (cache.size > 4000) cache.clear();
+  cache.set(key, value);
+  return value;
 };
 
-export const STARTER_CREATURE = { name: 'Glowmoth', color: '#a0ffd0', hp: 25, dmg: 4, speed: 6, size: 0.9 };
+const pickWeighted = (rng, entries) => {
+  let total = 0;
+  for (const [, w] of entries) total += w;
+  let r = rng() * total;
+  for (const [v, w] of entries) { r -= w; if (r <= 0) return v; }
+  return entries[entries.length - 1][0];
+};
 
-export function profileOf(planet) {
-  return SURFACE_PROFILES[planet.type] || SURFACE_PROFILES.Rocky;
+const terrainCache = new Map();
+export function terrainOf(planet) {
+  let id = terrainCache.get(planet.id);
+  if (id) return id;
+  if (planet.starter) id = 'havenMeadows';
+  else if (planet.holy) id = 'sacredGardens';
+  else {
+    const options = TERRAIN_IDS.filter((t) => TERRAINS[t].planetTypes[planet.type]).map((t) => [t, TERRAINS[t].planetTypes[planet.type]]);
+    id = options.length ? pickWeighted(mulberry32(hash2(planet.seed | 0, 101, 3)), options) : 'highlands';
+  }
+  remember(terrainCache, planet.id, id);
+  return id;
 }
 
-export function creatureOf(planet) {
-  if (planet.starter) return STARTER_CREATURE;
-  const c = profileOf(planet).creature;
+export function profileOf(planet) {
+  return TERRAINS[terrainOf(planet)];
+}
+
+const tagsMatch = (tags, terrainTags) => tags.includes('any') || tags.some((t) => terrainTags.includes(t));
+
+// The wildlife of a planet: up to three species whose habitat matches its terrain.
+const faunaCache = new Map();
+export function faunaOf(planet) {
+  let list = faunaCache.get(planet.id);
+  if (list) return list;
+  if (planet.starter) list = ['glowmoth'];
+  else {
+    const tags = profileOf(planet).tags;
+    const rng = mulberry32(hash2(planet.seed | 0, 202, 5));
+    let pool = CREATURE_IDS.filter((c) => !['guardian', 'soldier'].includes(CREATURES[c].behavior) && CREATURES[c].tags.some((t) => tags.includes(t)));
+    list = [];
+    const n = Math.min(pool.length, 1 + Math.floor(rng() * 3));
+    for (let i = 0; i < n; i++) {
+      const c = pickWeighted(rng, pool.map((id) => [id, CREATURES[id].rarity]));
+      list.push(c);
+      pool = pool.filter((x) => x !== c);
+    }
+    if (!list.length) list = ['rockCrawler'];
+  }
+  remember(faunaCache, planet.id, list);
+  return list;
+}
+
+// A species' stats on a given planet: tougher further from Haven.
+export function creatureStats(planet, speciesId) {
+  const c = CREATURES[speciesId] || CREATURES.rockCrawler;
+  if (planet.starter) return { ...c, id: speciesId };
   const k = 0.6 + 0.4 * planet.richness;
-  return { ...c, hp: Math.round(c.hp * k), dmg: Math.round(c.dmg * k * 10) / 10 };
+  return { ...c, id: speciesId, hp: Math.round(c.hp * k), dmg: Math.round(c.dmg * k * 10) / 10 };
+}
+
+// Structures standing on a planet: ruins, shrines, faction bases, wrecks, and on the holy
+// capital, the Cathedral. Each gets a position, a facing, and (for shrines) a god.
+const structCache = new Map();
+export function structuresOf(planet) {
+  let list = structCache.get(planet.id);
+  if (list) return list;
+  list = [];
+  if (planet.starter) return remember(structCache, planet.id, list);
+  const rng = mulberry32(hash2(planet.seed | 0, 303, 9));
+  const tags = profileOf(planet).tags;
+  const place = (type, x, z) => {
+    const st = STRUCTURES[type];
+    const inst = { id: `s${list.length}`, type, x, z, rot: rng() * Math.PI * 2, radius: st.radius };
+    if (st.kind === 'shrine') {
+      const gods = GOD_IDS.filter((g) => GODS[g].tags.some((t) => tags.includes(t)));
+      inst.god = (gods.length ? gods : GOD_IDS)[Math.floor(rng() * (gods.length || GOD_IDS.length))];
+    }
+    list.push(inst);
+  };
+  const free = (x, z, r) => Math.hypot(x, z) > clearRadius(planet) + r + 20 &&
+    list.every((o) => Math.hypot(o.x - x, o.z - z) > o.radius + r + 24);
+  if (planet.holy) {
+    list.push({ id: 's0', type: 'cathedral', x: 0, z: -110, rot: 0, radius: STRUCTURES.cathedral.radius });
+  }
+  // Ruins and shrines are special: only some worlds have them (ancient terrains more often).
+  const ancient = tags.includes('ancient');
+  const hasRuins = rng() < (ancient ? 0.85 : 0.22);
+  const hasShrine = rng() < (ancient ? 0.5 : 0.3);
+  const pool = STRUCTURE_IDS.filter((id) => {
+    const st = STRUCTURES[id];
+    if (!st.rarity || !tagsMatch(st.tags, tags)) return false;
+    if (st.kind === 'ruin' && !hasRuins) return false;
+    if (st.kind === 'shrine' && !hasShrine) return false;
+    if (st.territory === 'capital') return planet.territory === 'capital';
+    if (st.territory === 'empire') return planet.territory === 'empire' || planet.territory === 'capital';
+    if (st.territory === 'rebellion') return planet.territory === 'rebellion';
+    if (st.kind === 'shrine' && planet.holy) return false;   // no heresy on Aurelis
+    return true;
+  });
+  const forced = planet.holy ? ['pilgrimCamp', 'pilgrimCamp', 'inquisitionSpire', 'imperialGarrison'] : [];
+  const n = forced.length + (planet.holy ? 2 : 1 + Math.floor(rng() * 3));
+  for (let i = 0; i < n && pool.length; i++) {
+    const type = forced[i] || pickWeighted(rng, pool.map((id) => [id, STRUCTURES[id].rarity]));
+    const r = STRUCTURES[type].radius;
+    for (let tries = 0; tries < 12; tries++) {
+      const x = range(rng, -SURFACE_HALF + 80, SURFACE_HALF - 80), z = range(rng, -SURFACE_HALF + 80, SURFACE_HALF - 80);
+      if (free(x, z, r)) { place(type, x, z); break; }
+    }
+  }
+  return remember(structCache, planet.id, list);
 }
 
 const clearRadius = (planet) => (planet.starter ? SETTLEMENT_RADIUS : 36);
 
+// Ground is levelled under structures so buildings sit flat.
+const padCache = new Map();
+function pads(planet) {
+  let list = padCache.get(planet.id);
+  if (!list) {
+    list = structuresOf(planet).map((st) => ({ x: st.x, z: st.z, r: st.radius + 4, h: rawHeight(planet, st.x, st.z) }));
+    remember(padCache, planet.id, list);
+  }
+  return list;
+}
+
 export function baseHeight(planet, x, z) {
+  let h = rawHeight(planet, x, z);
+  for (const p of pads(planet)) {
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (d > p.r * 1.7) continue;
+    const t = Math.max(0, Math.min(1, (d - p.r) / (p.r * 0.7)));
+    h = p.h + (h - p.h) * t * t * (3 - 2 * t);
+  }
+  return h;
+}
+
+// The structure base height (the level ground it stands on).
+export function structureBase(planet, st) {
+  return pads(planet).find((p) => p.x === st.x && p.z === st.z)?.h ?? rawHeight(planet, st.x, st.z);
+}
+
+function rawHeight(planet, x, z) {
   const p = profileOf(planet), s = planet.seed | 0;
   const n = fbm(x / 220 + 50, z / 220 + 50, s, 5);
   const ridge = 1 - Math.abs(fbm(x / 90, z / 90, s + 7, 3) * 2 - 1);
@@ -92,7 +222,7 @@ export function deposits(planet) {
     for (const [o, w] of rare) { r -= w; if (r <= 0) { ore = o; break; } }
     list.push({ id: `d${i}`, x, z, ore, amount: 30 });
   }
-  depositCache.set(planet.id, list);
+  remember(depositCache, planet.id, list);
   return list;
 }
 
@@ -124,16 +254,23 @@ export const SETTLEMENT = {
   pad: { x: 0, z: 34, r: 12 },
 };
 
+const FLORA_COUNT = { tree: 7, palm: 3, rock: 3, spike: 3, cactus: 2, mushroom: 5, crystal: 3, bone: 2, reed: 8, deadtree: 3, coral: 6 };
+
 export function floraFor(planet, tx, tz) {
   const p = profileOf(planet);
   const rng = mulberry32(hash2(tx, tz, (planet.seed | 0) + 13));
-  const n = { tree: 7, palm: 3, rock: 3, spike: 3, cactus: 2 }[p.flora] || 2;
+  const main = p.flora[0][0];
+  const n = Math.round((FLORA_COUNT[main] || 3) * (p.density ?? 1));
   const out = [];
+  const structs = structuresOf(planet);
   for (let i = 0; i < n; i++) {
     const x = tx * 40 + rng() * 40, z = tz * 40 + rng() * 40;
+    const kind = pickWeighted(rng, p.flora);
+    const s = 0.7 + rng() * 0.8, r = rng() * Math.PI * 2, v = rng();
     if (Math.hypot(x, z) < clearRadius(planet) + 6) continue;
     if (Math.max(Math.abs(x), Math.abs(z)) > SURFACE_HALF - 30) continue;
-    out.push({ x, z, s: 0.7 + rng() * 0.8, r: rng() * Math.PI * 2, kind: p.flora, v: rng() });
+    if (structs.some((st) => Math.hypot(st.x - x, st.z - z) < st.radius + 5)) continue;
+    out.push({ x, z, s, r, kind, v });
   }
   return out;
 }

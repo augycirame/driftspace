@@ -1,6 +1,8 @@
 // Personal equipment: hand weapons and armor the pilot uses on foot.
 
 import { mulberry32, hash2, weightedPick, pick } from './rng.js';
+import { RELICS, RELIC_IDS, RELIC_COLORS } from './content/relics.js';
+import { GODS } from './content/factions.js';
 
 export const TIERS = [
   null,
@@ -33,6 +35,7 @@ export const PLAYER_SPEED = 11;
 export const RUN_SPEED = 17;
 
 export function itemName(it) {
+  if (it.kind === 'relic') return RELICS[it.type]?.name || 'Unknown relic';
   const tier = TIERS[it.tier].name;
   return it.kind === 'weapon' ? `${tier} ${WEAPONS[it.type].name}` : `${tier} ${ARMOR_SLOTS[it.type].name}`;
 }
@@ -43,18 +46,62 @@ export function weaponStats(it) {
   return { ...w, damage: w.damage * m, range: w.range * (1 + 0.08 * ((it?.tier || 1) - 1)) };
 }
 
-export function armorRating(equipped, items) {
-  let armor = 0, shield = 0;
+export function armorRating(equipped, items, buffs = {}) {
+  let armor = 0, shield = buffs.shield || 0;
   for (const slot of ARMOR_SLOT_IDS) {
     const it = items.find((i) => i.id === equipped[slot]);
     if (!it) continue;
     armor += ARMOR_SLOTS[slot].armor * it.tier * TIERS[it.tier].mult;
     if (it.tier >= 5) shield += 15;
   }
+  armor = (armor + (buffs.armor ? 10 : 0)) * (1 + (buffs.armor || 0));
   return { armor: Math.round(armor), shield, reduction: armor / (armor + 100) };
 }
 
+// ---- relics and blessings --------------------------------------------------------------------
+
+export const RELIC_SLOTS = ['relic1', 'relic2'];
+export const BUFF_KEYS = ['damage', 'armor', 'speed', 'mining', 'jump', 'luck', 'regen', 'shield'];
+
+export function makeRelic(type) {
+  return { id: newItemId(), kind: 'relic', type, tier: Math.min(5, RELICS[type].rarity) };
+}
+
+// A random relic: rarer ones are less likely; gods' own relics never drop at random.
+export function randomRelic(rng = Math.random, pool = null) {
+  const ids = pool || RELIC_IDS.filter((id) => !RELICS[id].god && id !== 'hiveCore');
+  return makeRelic(weightedPick(rng, ids.map((id) => [id, 6 - RELICS[id].rarity])));
+}
+
+export const relicColor = (it) => RELIC_COLORS[RELICS[it.type]?.rarity || 1];
+
+// Everything currently boosting a pilot: carried relics plus an active blessing.
+export function buffsOf(inv, blessing, now = Date.now()) {
+  const b = {};
+  for (const k of BUFF_KEYS) b[k] = 0;
+  for (const slot of RELIC_SLOTS) {
+    const it = inv.items.find((i) => i.id === inv.equipped[slot]);
+    const r = it && RELICS[it.type];
+    if (r) for (const [k, v] of Object.entries(r.bonus)) b[k] += v;
+  }
+  if (blessing && blessing.until > now) for (const [k, v] of Object.entries(blessing.bonus)) b[k] += v;
+  return b;
+}
+
+export function describeBonus(bonus) {
+  const fmt = { damage: 'damage', armor: 'armor', speed: 'speed', mining: 'mining', luck: 'loot luck' };
+  return Object.entries(bonus).map(([k, v]) => {
+    if (k === 'jump') return `+${v} jump range`;
+    if (k === 'regen') return `+${v} health/s`;
+    if (k === 'shield') return `+${v} personal shield`;
+    return `+${Math.round(v * 100)}% ${fmt[k] || k}`;
+  }).join(', ');
+}
+
+export const godBlessing = (god) => ({ god, name: `Blessing of ${GODS[god].name.split(',')[0]}`, bonus: GODS[god].blessing });
+
 export function itemValue(it) {
+  if (it.kind === 'relic') return 300 * Math.pow(2, (RELICS[it.type]?.rarity || 1) - 1);
   const base = it.kind === 'weapon' ? WEAPONS[it.type].price : ARMOR_SLOTS[it.type].price;
   return Math.round(base * Math.pow(2.2, it.tier - 1));
 }

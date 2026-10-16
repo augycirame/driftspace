@@ -57,7 +57,7 @@ export const UPGRADES = {
 };
 export const upgradeCost = (level) => Math.round(150 * Math.pow(2.1, level));
 
-export function shipStats(blocks, upg = {}, effects = {}) {
+export function shipStats(blocks, upg = {}, effects = {}, buffs = {}) {
   let mass = 0, thrust = 0, hp = 0, shield = 0, cargo = 30, guns = 0, turn = 0, ext = 1;
   for (const [x, y, z, t] of blocks) {
     const p = SHIP_PARTS[t];
@@ -69,17 +69,18 @@ export function shipStats(blocks, upg = {}, effects = {}) {
   mass = Math.max(1, mass);
   const tw = thrust / mass;
   const l = upg.laser || 0, j = upg.jump || 0, g = upg.guns || 0;
+  const spd = 1 + (buffs.speed || 0);
   return {
     mass, hp, shield, cargo, guns,
-    accel: tw * 5.5,
-    maxSpeed: 220 + 420 * Math.min(1.4, tw / 90),
+    accel: tw * 5.5 * spd,
+    maxSpeed: (220 + 420 * Math.min(1.4, tw / 90)) * spd,
     turnRate: (1.9 + turn * 4) / (1 + mass / 45),
     shieldRegen: shield * 0.12,
-    gunDamage: 10 * (1 + 0.25 * g),
+    gunDamage: 10 * (1 + 0.25 * g) * (1 + (buffs.damage || 0)),
     gunInterval: 0.28,
-    mineRate: 9 * (1 + 0.45 * l),
+    mineRate: 9 * (1 + 0.45 * l) * (1 + (buffs.mining || 0)),
     mineRange: 340 + 45 * l,
-    jumpRange: 2 + j * 2 + (effects.jumpBonus || 0),
+    jumpRange: 2 + j * 2 + (effects.jumpBonus || 0) + (buffs.jump || 0),
     radius: ext * SHIP_BLOCK + 4,
   };
 }

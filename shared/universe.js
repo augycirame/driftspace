@@ -2,7 +2,8 @@
 // a SECTOR_SIZE square column of space. Its entire contents are a pure function of
 // (seed, sx, sz). Nothing here is stored; the server persists only what players change.
 
-import { rngFor, range, pick, weightedPick, fbm, hash2 } from './rng.js';
+import { rngFor, range, pick, weightedPick, fbm, hash2, mulberry32 } from './rng.js';
+import { FACTIONS, HOLY_CAPITAL } from './content/factions.js';
 
 export const SECTOR_SIZE = 5000;
 export const SAFE_RADIUS = 2;            // sectors around Haven where PvP is off
@@ -58,6 +59,35 @@ export function regionInfo(sx, sz, seed) {
   return { density, hue, nebula, richness, dist, name };
 }
 
+// Where the Empire's holy capital is: a fixed sector some way out from Haven.
+const capitalCache = new Map();
+export function holyCapitalSector(seed) {
+  let c = capitalCache.get(seed);
+  if (!c) {
+    const r = mulberry32(hash2(seed, 31337, 7));
+    const a = r() * Math.PI * 2;
+    c = [Math.round(Math.cos(a) * 22), Math.round(Math.sin(a) * 22)];
+    capitalCache.set(seed, c);
+  }
+  return c;
+}
+
+// Who controls a sector: Haven's free colonies, the Empire (with its holy capital), the
+// rebel frontier around the Empire's edge, or the lawless wilds.
+export function territoryOf(sx, sz, seed) {
+  if (isSafe(sx, sz)) return 'haven';
+  const [cx, cz] = holyCapitalSector(seed);
+  if (sx === cx && sz === cz) return 'capital';
+  const d = Math.hypot(sx - cx, sz - cz);
+  const reach = 13 + 5 * fbm(sx * 0.15, sz * 0.15, seed + 51, 3);
+  if (d <= reach) return 'empire';
+  if (d <= reach + 6 && fbm(sx * 0.3, sz * 0.3, seed + 61, 2) > 0.42) return 'rebellion';
+  if (fbm(sx * 0.07, sz * 0.07, seed + 71, 3) > 0.7) return 'rebellion';
+  return 'wilds';
+}
+
+export const factionOfTerritory = (t) => (t === 'empire' || t === 'capital' ? 'empire' : t === 'rebellion' ? 'rebellion' : null);
+
 const cache = new Map();
 const CACHE_MAX = 2000;
 
@@ -72,32 +102,37 @@ export function generateSector(sx, sz, seed) {
   const cx = ox + SECTOR_SIZE / 2 + range(rng, -600, 600);
   const cz = oz + SECTOR_SIZE / 2 + range(rng, -600, 600);
   const home = sx === 0 && sz === 0;
+  const territory = territoryOf(sx, sz, seed);
+  const capital = territory === 'capital';
 
   const sector = {
-    sx, sz, key: sectorKey(sx, sz), region, home, safe: isSafe(sx, sz),
-    name: home ? 'Haven' : makeName(rng),
+    sx, sz, key: sectorKey(sx, sz), region, home, safe: isSafe(sx, sz), territory, capital,
+    faction: factionOfTerritory(territory),
+    name: home ? 'Haven' : capital ? 'Aurelian Throne' : makeName(rng),
     star: null, planets: [], asteroids: [], station: null, wormhole: null, nebulae: [],
   };
 
-  if (home || rng() < 0.12 + 0.55 * region.density) {
-    const [type, , color, [r0, r1]] = home ? STAR_TYPES[1] : weightedPick(rng, STAR_TYPES.map((t) => [t, t[1]]));
+  if (home || capital || rng() < 0.12 + 0.55 * region.density) {
+    const [type, , color, [r0, r1]] = home || capital ? STAR_TYPES[1] : weightedPick(rng, STAR_TYPES.map((t) => [t, t[1]]));
     sector.star = { x: cx, y: 0, z: cz, type, color, r: range(rng, r0, r1) };
-    const nPlanets = type === 'Black hole' ? 0 : home ? 4 : Math.floor(rng() * 7);
+    const nPlanets = type === 'Black hole' ? 0 : home || capital ? 4 : Math.floor(rng() * 7);
     let orbit = sector.star.r + range(rng, 450, 700);
     for (let i = 0; i < nPlanets && orbit < SECTOR_SIZE * 0.48; i++) {
       let ptype = weightedPick(rng, Object.entries(PLANET_TYPES).map(([k, v]) => [k, v.weight]));
-      if (home && i === 0) ptype = 'Jungle';
+      if ((home || capital) && i === 0) ptype = 'Jungle';
       const colors = PLANET_TYPES[ptype].colors;
       const r = ptype === 'Gas' ? range(rng, 120, 200) : range(rng, 55, 110);
       const pid = `${sx},${sz}:p${i}`;
       sector.planets.push({
         id: pid, index: i, sx, sz,
-        name: home && i === 0 ? 'Haven' : sector.name.split(' ')[0] + ' ' + ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'][i],
+        name: home && i === 0 ? 'Haven' : capital && i === 0 ? HOLY_CAPITAL.planet : sector.name.split(' ')[0] + ' ' + ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'][i],
         type: ptype, color: pick(rng, colors), r,
         orbit, period: range(rng, 900, 3000) * Math.sqrt(orbit / 1000), phase: rng() * Math.PI * 2,
         ring: ptype === 'Gas' && rng() < 0.4,
         landable: PLANET_TYPES[ptype].land,
         starter: home && i === 0,
+        holy: capital && i === 0,
+        territory,
         seed: hash2(sx * 31 + i, sz, seed),
         richness: region.richness,
       });
@@ -132,15 +167,19 @@ export function generateSector(sx, sz, seed) {
   }
 
   const terminus = sx === FAR_REACH[0] && sz === FAR_REACH[1];
-  if (home || terminus || rng() < 0.02 + 0.05 * region.density) {
+  const lawful = sector.faction === 'empire';
+  if (home || terminus || capital || rng() < 0.02 + 0.05 * region.density + (lawful ? 0.06 : 0) + (territory === 'rebellion' ? 0.03 : 0)) {
     const a = rng() * Math.PI * 2, d = sector.star ? sector.star.r + range(rng, 900, 1500) : 0;
     sector.station = {
       id: `${sx},${sz}:st`,
       x: (sector.star ? cx : ox + SECTOR_SIZE / 2) + Math.cos(a) * d,
       y: home ? 0 : range(rng, -200, 200),
       z: (sector.star ? cz : oz + SECTOR_SIZE / 2) + Math.sin(a) * d,
-      name: home ? 'Haven Station' : terminus ? 'Gate Terminus' : makeName(rng, false) + ' ' + pick(rng, ['Station', 'Outpost', 'Exchange', 'Dock', 'Citadel']),
+      name: home ? 'Haven Station' : terminus ? 'Gate Terminus' : capital ? HOLY_CAPITAL.station
+        : makeName(rng, false) + ' ' + pick(rng, sector.faction ? FACTIONS[sector.faction].station : ['Station', 'Outpost', 'Exchange', 'Dock']),
       richness: region.richness,
+      faction: home || terminus ? null : sector.faction,
+      capital,
     };
   }
 

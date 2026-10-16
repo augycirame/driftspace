@@ -4,10 +4,18 @@
 import { findPlanet, planetPos, generateSector } from '../shared/universe.js';
 import {
   CELL, SURFACE_HALF, MAX_DIG, SETTLEMENT, SETTLEMENT_RADIUS,
-  standHeight, heightAt, deposits, digOre, creatureOf, landingSpot, vkey,
+  standHeight, heightAt, deposits, digOre, landingSpot, vkey, terrainOf, faunaOf, structuresOf, creatureStats,
 } from '../shared/planet.js';
 import { BLOCKS, SURFACE_GRID, canAfford, cargoTotal } from '../shared/rules.js';
-import { weaponStats, armorRating, randomItem, PLAYER_HP, RUN_SPEED } from '../shared/items.js';
+import { weaponStats, armorRating, randomItem, randomRelic, makeRelic, godBlessing, PLAYER_HP, RUN_SPEED } from '../shared/items.js';
+import { CREATURES } from '../shared/content/creatures.js';
+import { STRUCTURES } from '../shared/content/structures.js';
+import { GODS, PRAYER } from '../shared/content/factions.js';
+import { RELICS } from '../shared/content/relics.js';
+
+const GUARD_RESPAWN_MS = 5 * 60 * 1000;
+// Reputation change for killing a faction's soldier.
+const SOLDIER_KILL_REP = { empire: { empire: -8, rebellion: 5 }, rebellion: { rebellion: -8, empire: 5 } };
 
 const num = (v) => typeof v === 'number' && Number.isFinite(v);
 let nextId = 1;
@@ -28,7 +36,7 @@ export class Surfaces {
     if (!inst) {
       const planet = findPlanet(pid, this.w.seed);
       if (!planet) return null;
-      inst = { planet, creatures: new Map(), lastSpawn: 0 };
+      inst = { planet, creatures: new Map(), lastSpawn: 0, guardsAt: {}, structures: structuresOf(planet) };
       this.instances.set(pid, inst);
     }
     return inst;
@@ -38,9 +46,10 @@ export class Surfaces {
     return standHeight(this.instance(pid).planet, x, z, this.saved(pid).digs);
   }
 
-  state(pid) {
+  state(pid, p) {
     const s = this.saved(pid);
-    return { t: 'surface', planet: pid, digs: s.digs, blocks: s.blocks, deposits: s.deposits };
+    const looted = p ? Object.keys(p.looted).filter((k) => k.startsWith(pid + '#')).map((k) => k.split('#')[1]) : [];
+    return { t: 'surface', planet: pid, digs: s.digs, blocks: s.blocks, deposits: s.deposits, looted };
   }
 
   // ---- arriving and leaving -------------------------------------------------------------------
@@ -60,7 +69,13 @@ export class Surfaces {
     p.mining = null;
     this.refreshVitals(p);
     conn.subs = new Set();
-    conn.send(this.state(pid));
+    conn.send(this.state(pid, p));
+    // Landing fills in the codex: this world's terrain, wildlife and structures.
+    const planet = inst.planet;
+    this.w.discover(conn, [
+      `terrain:${terrainOf(planet)}`, ...faunaOf(planet).map((c) => `creature:${c}`),
+      ...inst.structures.map((st) => `structure:${st.type}`), ...(planet.holy ? ['place:capital'] : []),
+    ]);
   }
 
   parkSpot(planet, key) {
@@ -101,7 +116,7 @@ export class Surfaces {
   }
 
   refreshVitals(p) {
-    const ar = armorRating(p.inv.equipped, p.inv.items);
+    const ar = armorRating(p.inv.equipped, p.inv.items, p.buffs || {});
     p.armor = ar;
     p.maxHp = PLAYER_HP + ar.shield;
     if (p.hp == null || p.hp > p.maxHp) p.hp = p.maxHp;
@@ -131,6 +146,7 @@ export class Surfaces {
     const weapon = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
     if (!weapon) return conn.send({ t: 'toast', msg: 'No weapon equipped (Tab to open your gear).' });
     const ws = weaponStats(weapon);
+    ws.damage *= 1 + (p.buffs?.damage || 0);
     const now = Date.now();
     if (now - (p.lastShot || 0) < 1000 / ws.rate * 0.85) return;
     p.lastShot = now;
@@ -175,18 +191,27 @@ export class Surfaces {
   hurtCreature(inst, c, dmg, conn) {
     c.hp -= dmg;
     c.aggro = conn.player.key;
+    // Attacking one soldier makes the whole squad turn on you.
+    if (c.faction) for (const o of inst.creatures.values()) if (o.faction === c.faction && Math.hypot(o.x - c.x, o.z - c.z) < 60) o.aggro = conn.player.key;
     this.toPlanet(inst.planet.id, { t: 'hit', id: c.id, x: c.x, y: c.y + c.size, z: c.z, dmg: Math.round(dmg) });
     if (c.hp > 0) return;
     inst.creatures.delete(c.id);
-    this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: true });
-    const reward = Math.round((inst.planet.starter ? 3 : 8) * inst.planet.richness);
+    this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
+    this.w.discover(conn, [`creature:${c.species}`]);
+    if (c.faction) {
+      this.w.changeRep(conn, SOLDIER_KILL_REP[c.faction]);
+      this.w.warScore(c.faction === 'empire' ? 'rebellion' : 'empire');
+    }
+    const luck = 1 + (conn.player.buffs?.luck || 0);
+    if (c.guard && Math.random() < 0.15 * luck) this.w.giveItem(conn, randomRelic());
+    const reward = Math.round((inst.planet.starter ? 3 : c.guard || c.faction ? 25 : 8) * inst.planet.richness);
     const crew = this.w.parties.nearbyMembers(conn.player);
     for (const p of crew) {
       p.credits += Math.max(1, Math.round(reward / crew.length));
       const pc = this.w.connByName(p.key);
       if (pc) this.w.sendSelf(pc);
     }
-    if (Math.random() < (inst.planet.starter ? 0.08 : 0.25)) this.w.giveItem(conn, randomItem(inst.planet.richness));
+    if (Math.random() < (inst.planet.starter ? 0.08 : 0.25) * luck) this.w.giveItem(conn, randomItem(inst.planet.richness));
   }
 
   hurtPlayer(conn, dmg, byName) {
@@ -284,7 +309,7 @@ export class Surfaces {
     this.toPlanet(p.planet, { t: 'sblock', planet: p.planet, cell, data: null });
   }
 
-  interact(conn, { what }) {
+  interact(conn, { what, id }) {
     const p = conn.player;
     if (p.mode !== 'surface' || p.dead) return;
     const inst = this.instance(p.planet);
@@ -298,6 +323,7 @@ export class Surfaces {
       conn.send({ t: 'dialogue', who: SETTLEMENT.warden.name });
       return this.w.tutorial(conn, 'warden');
     }
+    if (what === 'structure') return this.useStructure(conn, inst, id);
     if (what === 'relic') {
       const site = this.w.story.relics().find((r) => r.planet === p.planet);
       if (!site || !near(site.x, site.z, 8)) return;
@@ -305,6 +331,56 @@ export class Surfaces {
       p.credits += 500;
       this.w.giveItem(conn, randomItem(inst.planet.richness + 2));
       this.w.sendSelf(conn);
+    }
+  }
+
+  // Loot a cache, pray at a shrine, or kneel in the Cathedral.
+  useStructure(conn, inst, id) {
+    const p = conn.player;
+    const st = inst.structures.find((x) => x.id === id);
+    if (!st || Math.hypot(p.px - st.x, p.pz - st.z) > st.radius + 8) return;
+    const def = STRUCTURES[st.type];
+    this.w.discover(conn, [`structure:${st.type}`]);
+    if (def.kind === 'shrine') return this.pray(conn, st);
+    if (st.type === 'cathedral') {
+      return conn.send({ t: 'toast', msg: 'The Cathedral doors are open to the faithful. Dock at the Sanctum above to receive the Benediction.' });
+    }
+    if (!def.cache) return conn.send({ t: 'chat', from: null, text: `${def.name}: ${def.lore}` });
+    const key = `${inst.planet.id}#${st.id}`;
+    if (p.looted[key]) return conn.send({ t: 'toast', msg: 'You have already searched this.' });
+    p.looted[key] = Date.now();
+    const rich = inst.planet.richness, luck = 1 + (p.buffs?.luck || 0);
+    const [lo, hi] = def.cache.credits;
+    const credits = Math.round((lo + Math.random() * (hi - lo)) * (0.7 + 0.3 * rich));
+    p.credits += credits;
+    conn.send({ t: 'chat', from: null, text: `${def.name}: ${def.lore}` });
+    conn.send({ t: 'toast', msg: `Searched the ${def.name}: +${credits} cr` });
+    if (Math.random() < def.cache.item * luck) this.w.giveItem(conn, randomItem(rich + 1));
+    if (Math.random() < (def.cache.relic || 0) * luck) {
+      const pool = def.cache.relics?.filter((r) => RELICS[r]);
+      this.w.giveItem(conn, pool?.length && Math.random() < 0.6 ? makeRelic(pool[Math.floor(Math.random() * pool.length)]) : randomRelic());
+    }
+    if (def.kind === 'imperial') this.w.changeRep(conn, { empire: -5 }, 'The Empire will hear you robbed its garrison.');
+    if (def.kind === 'rebel') this.w.changeRep(conn, { rebellion: -5 }, 'The Unbound will remember who raided their cache.');
+    conn.send({ t: 'looted', planet: inst.planet.id, id: st.id });
+    this.w.dirty = true;
+    this.w.sendSelf(conn);
+  }
+
+  pray(conn, st) {
+    const p = conn.player, god = GODS[st.god], now = Date.now();
+    const wait = PRAYER.cooldownMinutes * 60000 - (now - (p.lastPray || 0));
+    if (wait > 0) return conn.send({ t: 'toast', msg: `The gods are not listening yet (${Math.ceil(wait / 60000)} min).` });
+    p.lastPray = now;
+    p.favor[st.god] = (p.favor[st.god] || 0) + 1;
+    this.w.discover(conn, [`god:${st.god}`]);
+    this.w.bless(conn, godBlessing(st.god), PRAYER.minutes);
+    conn.send({ t: 'chat', from: null, text: `You pray to ${god.name}. ${god.lore}` });
+    // The Empire calls the old gods heresy; the rebels have taken them back.
+    this.w.changeRep(conn, { empire: -3, rebellion: 2 });
+    if (p.favor[st.god] === PRAYER.favorForRelic) {
+      conn.send({ t: 'transmission', title: god.name.toUpperCase(), lines: [`${god.name.split(',')[0]} answers. Something heavy and old is pressed into your hands.`] });
+      this.w.giveItem(conn, makeRelic(god.relic));
     }
   }
 
@@ -318,8 +394,9 @@ export class Surfaces {
       if (!byPlanet.has(p.planet)) byPlanet.set(p.planet, []);
       byPlanet.get(p.planet).push(c);
       // Health regenerates out of combat.
-      if (!p.dead && p.hp < p.maxHp && now - (p.lastHurt || 0) > 6000) {
-        p.hp = Math.min(p.maxHp, p.hp + 4 * dt);
+      const regen = p.buffs?.regen || 0;
+      if (!p.dead && p.hp < p.maxHp && (now - (p.lastHurt || 0) > 6000 || regen)) {
+        p.hp = Math.min(p.maxHp, p.hp + (now - (p.lastHurt || 0) > 6000 ? 4 : 0) * dt + regen * dt);
         if (Math.random() < 0.1) c.send({ t: 'you', hp: p.hp });
       }
     }
@@ -331,50 +408,101 @@ export class Surfaces {
     }
   }
 
+  newCreature(inst, species, x, z, extra = {}) {
+    const def = creatureStats(inst.planet, species);
+    const id = 'c' + nextId++;
+    const c = {
+      id, species, x, z, y: this.ground(inst.planet.id, x, z), yaw: 0, hp: def.hp, maxHp: def.hp, dmg: def.dmg,
+      speed: def.speed, size: def.size, behavior: def.behavior, faction: def.faction || null, shape: def.shape,
+      lastAttack: 0, wander: null, aggro: null, ...extra,
+    };
+    inst.creatures.set(id, c);
+    return c;
+  }
+
   spawnCreatures(inst, conns, now) {
     if (now - inst.lastSpawn < 1500) return;
     inst.lastSpawn = now;
     const planet = inst.planet;
+
+    // Ruin guardians and faction soldiers turn out when someone comes near their structure.
+    for (const st of inst.structures) {
+      const def = STRUCTURES[st.type];
+      const guard = def.guardians || def.soldiers;
+      if (!guard) continue;
+      if (now - (inst.guardsAt[st.id] || 0) < GUARD_RESPAWN_MS) continue;
+      if (!conns.some((c) => Math.hypot(c.player.px - st.x, c.player.pz - st.z) < st.radius + 70)) continue;
+      inst.guardsAt[st.id] = now;
+      const [species, count] = guard;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + Math.random();
+        const x = st.x + Math.cos(a) * (st.radius + 4), z = st.z + Math.sin(a) * (st.radius + 4);
+        this.newCreature(inst, species, x, z, { guard: st.id, home: [st.x, st.z], leash: st.radius + 45 });
+      }
+    }
+
+    const wild = [...inst.creatures.values()].filter((c) => !c.guard).length;
     const cap = Math.min(18, conns.length * (planet.starter ? 3 : 5));
-    if (inst.creatures.size >= cap || Math.random() > 0.5) return;
+    if (wild >= cap || Math.random() > 0.5) return;
     const anchor = conns[Math.floor(Math.random() * conns.length)].player;
     const a = Math.random() * Math.PI * 2, d = 55 + Math.random() * 70;
     const x = anchor.px + Math.cos(a) * d, z = anchor.pz + Math.sin(a) * d;
     if (Math.max(Math.abs(x), Math.abs(z)) > SURFACE_HALF - 45) return;
     if (Math.hypot(x, z) < (planet.starter ? 120 : 45)) return;
-    const def = creatureOf(planet);
-    const id = 'c' + nextId++;
-    inst.creatures.set(id, {
-      id, x, z, y: this.ground(planet.id, x, z), yaw: 0, hp: def.hp, maxHp: def.hp, dmg: def.dmg,
-      speed: def.speed, size: def.size, lastAttack: 0, wander: null, aggro: planet.starter ? null : 'any',
-    });
+    const fauna = faunaOf(planet);
+    let total = 0;
+    for (const f of fauna) total += CREATURES[f].rarity;
+    let r = Math.random() * total, species = fauna[0];
+    for (const f of fauna) { r -= CREATURES[f].rarity; if (r <= 0) { species = f; break; } }
+    const pack = CREATURES[species].behavior === 'swarm' ? 3 + Math.floor(Math.random() * 2) : 1;
+    for (let i = 0; i < pack; i++) this.newCreature(inst, species, x + (Math.random() - 0.5) * 8, z + (Math.random() - 0.5) * 8);
+  }
+
+  // Whether a creature wants to fight this pilot, and from how far away.
+  aggroRange(c, p) {
+    if (c.aggro === p.key) return 60;
+    switch (c.behavior) {
+      case 'aggressive': case 'swarm': return 45;
+      case 'territorial': return 18;
+      case 'guardian': return 40;
+      case 'soldier': return this.w.hostileTo(c.faction, p) ? 55 : 0;
+      default: return 0;   // passive
+    }
   }
 
   creatureTick(inst, conns, dt, now) {
-    const planet = inst.planet;
     for (const c of inst.creatures.values()) {
-      let target = null, best = planet.starter ? 30 : 45;
+      let target = null, best = Infinity;
       for (const oc of conns) {
         const p = oc.player;
         if (p.dead) continue;
-        if (c.aggro !== 'any' && c.aggro !== p.key) continue;
         const d = Math.hypot(p.px - c.x, p.pz - c.z);
-        if (d < best) { best = d; target = oc; }
+        const range = this.aggroRange(c, p);
+        if (d < range && d < best) { best = d; target = oc; }
       }
-      // Wander off if nobody is around at all.
-      if (!conns.some((oc) => Math.hypot(oc.player.px - c.x, oc.player.pz - c.z) < 220)) { inst.creatures.delete(c.id); continue; }
+      // Wander off if nobody is around at all; guards stay home.
+      if (!c.guard && !conns.some((oc) => Math.hypot(oc.player.px - c.x, oc.player.pz - c.z) < 220)) { inst.creatures.delete(c.id); continue; }
+      if (c.guard && c.home && Math.hypot(c.x - c.home[0], c.z - c.home[1]) > c.leash) { target = null; c.aggro = null; }
       let tx, tz, speed = c.speed;
       if (target) {
         tx = target.player.px; tz = target.player.pz;
-        if (best < 1.6 + c.size) {
-          speed = 0;
-          if (now - c.lastAttack > 1100) {
+        // Soldiers shoot from range; everything else has to get close.
+        const reach = c.behavior === 'soldier' ? 28 : 1.6 + c.size;
+        if (best < reach) {
+          speed = c.behavior === 'soldier' && best > 12 ? speed * 0.4 : 0;
+          if (now - c.lastAttack > (c.behavior === 'soldier' ? 900 : 1100)) {
             c.lastAttack = now;
-            this.hurtPlayer(target, c.dmg, creatureOf(planet).name);
+            if (c.behavior === 'soldier') {
+              this.toPlanet(inst.planet.id, { t: 'shot', by: c.id, from: [c.x, c.y + 1.5, c.z], to: [[target.player.px, target.player.py + 1.2, target.player.pz]], c: c.faction === 'empire' ? '#ffe08a' : '#ff6a4a' });
+              if (Math.random() < 0.7) this.hurtPlayer(target, c.dmg, CREATURES[c.species].name);
+            } else this.hurtPlayer(target, c.dmg, CREATURES[c.species].name);
           }
         }
+      } else if (c.guard && c.home && Math.hypot(c.x - c.home[0], c.z - c.home[1]) > 8) {
+        [tx, tz] = c.home;
       } else {
-        if (!c.wander || Math.hypot(c.wander[0] - c.x, c.wander[1] - c.z) < 3) c.wander = [c.x + (Math.random() - 0.5) * 50, c.z + (Math.random() - 0.5) * 50];
+        const base = c.home || [c.x, c.z];
+        if (!c.wander || Math.hypot(c.wander[0] - c.x, c.wander[1] - c.z) < 3) c.wander = [base[0] + (Math.random() - 0.5) * (c.guard ? 30 : 50), base[1] + (Math.random() - 0.5) * (c.guard ? 30 : 50)];
         [tx, tz] = c.wander;
         speed *= 0.35;
       }
@@ -384,8 +512,8 @@ export class Surfaces {
         const nx = c.x + (dx / d) * step, nz = c.z + (dz / d) * step;
         if (Math.max(Math.abs(nx), Math.abs(nz)) < SURFACE_HALF - 40) { c.x = nx; c.z = nz; }
         c.yaw = Math.atan2(dx, dz);
-      }
-      c.y = this.ground(planet.id, c.x, c.z);
+      } else if (target) c.yaw = Math.atan2(target.player.px - c.x, target.player.pz - c.z);
+      c.y = this.ground(inst.planet.id, c.x, c.z);
     }
   }
 
@@ -404,7 +532,7 @@ export class Surfaces {
       const w = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
       players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0 });
     }
-    const creatures = inst ? [...inst.creatures.values()].map((c) => ({ id: c.id, x: c.x, y: c.y, z: c.z, yaw: c.yaw, hp: c.hp, maxHp: c.maxHp, size: c.size })) : [];
+    const creatures = inst ? [...inst.creatures.values()].map((c) => ({ id: c.id, sp: c.species, x: c.x, y: c.y, z: c.z, yaw: c.yaw, hp: c.hp, maxHp: c.maxHp, size: c.size, hostile: this.aggroRange(c, me) > 0 })) : [];
     return { players, creatures, parked };
   }
 }

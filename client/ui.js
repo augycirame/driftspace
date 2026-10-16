@@ -1,10 +1,12 @@
 // DOM interface: HUD, panels (station, shop, gear, party, journal, dialogue, help),
 // story transmissions, toasts and chat.
 
-import { generateSector, sectorOf, findPlanet, isSafe } from '/shared/universe.js';
+import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
 import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford } from '/shared/rules.js';
-import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, itemName, weaponStats, itemValue } from '/shared/items.js';
+import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, itemName, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
+import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
+import { terrainOf as terrainOfPlanet } from '/shared/planet.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -140,6 +142,12 @@ export class UI {
       body.appendChild(this.row(`Contribute to <b>${esc(S.story?.title || 'the story')}</b><br><span class="small dim">${wants.length ? 'Wanted: ' + wants.map((o) => ORES[o].name).join(', ') + '. Pays 25% over market.' : 'Nothing wanted right now.'}</span>`, cb));
       body.appendChild(this.row('Gear shop<br><span class="small dim">Weapons and armor</span>', this.button('Browse', () => this.send({ t: 'shop' }))));
       body.appendChild(this.row('Shipyard<br><span class="small dim">Rebuild your ship block by block</span>', this.button('Open', () => { this.close(); this.onShipyard?.(); })));
+      if (docked.station.capital) {
+        const b = HOLY_CAPITAL.blessing;
+        const bb = this.button(`Tithe ${b.tithe} cr`, () => this.send({ t: 'benediction' }));
+        bb.disabled = you.credits < b.tithe || you.rep.empire < b.minRep;
+        body.appendChild(this.row(`<b style="color:#ffe08a">${b.name}</b><br><span class="small dim">${describeBonus(b.bonus)} for ${b.minutes} min. Citizens of the Empire only.</span>`, bb));
+      }
       if (docked.gate) {
         const home = docked.station.id === '0,0:st';
         body.appendChild(this.row(`<b style="color:#d9a8ff">The Ancient Gate</b><br><span class="small dim">${home ? 'Travel to the Far Reach' : 'Return to Haven'}</span>`, this.button('Go', () => { this.close(); this.send({ t: 'gate' }); })));
@@ -191,6 +199,7 @@ export class UI {
       top.innerHTML =
         `<table><tr><td>Weapon</td><td>${w ? `<span style="color:${TIERS[w.tier].color}">${esc(itemName(w))}</span> · ${Math.round(ws.damage * ws.pellets * ws.rate)} dps` : '<span class="dim">none</span>'}</td></tr>` +
         ARMOR_SLOT_IDS.map((s) => { const a = find(eq[s]); return `<tr><td>${ARMOR_SLOTS[s].name}</td><td>${a ? `<span style="color:${TIERS[a.tier].color}">${esc(itemName(a))}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
+        RELIC_SLOTS.map((s, i) => { const r = find(eq[s]); return `<tr><td>Relic ${i + 1}</td><td>${r ? `<span style="color:${relicColor(r)}">${esc(itemName(r))}</span> <span class="dim small">${describeBonus(RELICS[r.type].bonus)}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
         `<tr><td>Armor</td><td>${you.armor?.armor || 0} (${Math.round((you.armor?.reduction || 0) * 100)}% damage reduction)</td></tr>` +
         `<tr><td>Health</td><td>${Math.round(you.hp)} / ${you.maxHp}</td></tr></table>`;
       body.appendChild(top);
@@ -203,9 +212,10 @@ export class UI {
         const on = Object.values(eq).includes(it.id);
         const el = document.createElement('div');
         el.className = 'item' + (on ? ' eq' : '');
-        const det = it.kind === 'weapon' ? (() => { const s = weaponStats(it); return `${Math.round(s.damage * s.pellets)} dmg · ${s.rate}/s`; })() : `${ARMOR_SLOTS[it.type].name} armor`;
+        const det = it.kind === 'relic' ? describeBonus(RELICS[it.type].bonus)
+          : it.kind === 'weapon' ? (() => { const s = weaponStats(it); return `${Math.round(s.damage * s.pellets)} dmg · ${s.rate}/s`; })() : `${ARMOR_SLOTS[it.type].name} armor`;
         el.innerHTML = `<b style="color:${TIERS[it.tier].color}">${esc(itemName(it))}</b><span class="dim">${det}</span>`;
-        const slot = it.kind === 'weapon' ? 'weapon' : it.type;
+        const slot = it.kind === 'weapon' ? 'weapon' : it.kind === 'relic' ? RELIC_SLOTS.find((r) => eq[r] === it.id) : it.type;
         el.appendChild(this.button(on ? 'Unequip' : 'Equip', () => this.send(on ? { t: 'unequip', slot } : { t: 'equip', id: it.id }), on ? 'alt' : ''));
         el.appendChild(this.button('Discard', () => { if (confirm(`Discard ${itemName(it)}?`)) this.send({ t: 'drop', id: it.id }); }, 'alt'));
         grid.appendChild(el);
@@ -280,10 +290,78 @@ export class UI {
         body.appendChild(h);
         for (const c of changes) { const p = document.createElement('p'); p.className = 'small'; p.textContent = c; body.appendChild(p); }
       }
+      const you = this.S.you;
+      const hf = document.createElement('h3');
+      hf.textContent = 'Factions';
+      body.appendChild(hf);
+      for (const [id, f] of Object.entries(FACTIONS)) {
+        const r = you.rep?.[id] || 0;
+        const el = document.createElement('div');
+        el.className = 'goal';
+        el.innerHTML = `<b style="color:${f.color}">${esc(f.name)}</b>: ${esc(factionTitle(id, r))} <span class="dim">(${r})</span><div class="bar"><span style="width:${(r + 100) / 2}%;background:${f.color}"></span></div>`;
+        body.appendChild(el);
+      }
+      const war = you.war || { empire: 0, rebellion: 0 };
+      const total = war.empire + war.rebellion || 1;
+      const w = document.createElement('div');
+      w.className = 'goal';
+      w.innerHTML = `The war: Empire ${war.empire} · Unbound ${war.rebellion} victories<div class="bar"><span style="width:${(100 * war.empire) / total}%;background:#f2cf4a"></span></div>`;
+      body.appendChild(w);
+      if (you.blessing && you.blessing.until > Date.now()) body.appendChild(this.row(`<b style="color:#ffe08a">${esc(you.blessing.name)}</b> · ${describeBonus(you.blessing.bonus)} · ${Math.ceil((you.blessing.until - Date.now()) / 60000)} min left`));
       const h2 = document.createElement('h3');
       h2.textContent = 'Log';
       body.appendChild(h2);
       for (const l of [...st.log].reverse()) { const p = document.createElement('p'); p.className = 'small dim'; p.textContent = l.text; body.appendChild(p); }
+    });
+  }
+
+  // ---- codex: the content library, filled in as you discover things -------------------------
+
+  discovered(keys) {
+    for (const k of keys) {
+      const [kind, id] = k.split(':');
+      const name = { terrain: TERRAINS, creature: CREATURES, structure: STRUCTURES, relic: RELICS, god: GODS }[kind]?.[id]?.name;
+      if (name) this.toast(`Codex: ${name}`, 'loot');
+    }
+    if (this.current?.kind === 'codex') this.rerender();
+  }
+
+  codex(tab = this.codexTab || 'creatures') {
+    this.codexTab = tab;
+    this.open('codex', 'Codex', (body) => {
+      const known = new Set(this.S.you.codex || []);
+      const tabs = { creatures: ['Creatures', CREATURES, 'creature'], terrains: ['Terrains', TERRAINS, 'terrain'], structures: ['Structures', STRUCTURES, 'structure'], relics: ['Relics', RELICS, 'relic'], gods: ['Gods', GODS, 'god'], factions: ['Powers', null] };
+      const bar = document.createElement('div');
+      bar.className = 'tabs';
+      for (const [id, [label, table, prefix]] of Object.entries(tabs)) {
+        const n = table ? Object.keys(table).filter((k) => known.has(`${prefix}:${k}`)).length : null;
+        const b = this.button(n == null ? label : `${label} ${n}/${Object.keys(table).length}`, () => this.codex(id));
+        if (id === tab) b.className = 'sel';
+        bar.appendChild(b);
+      }
+      body.appendChild(bar);
+      const [, table, prefix] = tabs[tab];
+      if (!table) {
+        for (const f of Object.values(FACTIONS)) body.appendChild(this.row(`<b style="color:${f.color}">${esc(f.name)}</b><br><span class="small">${esc(f.desc)}</span>`));
+        body.appendChild(this.row(`<b style="color:#ffe08a">${HOLY_CAPITAL.planet}, the Holy Capital</b><br><span class="small">${esc(HOLY_CAPITAL.desc)}</span>`));
+        body.appendChild(this.row(`<b style="color:#c27bff">The Precursors</b><br><span class="small">They raised temples to five gods, sealed their vaults, and vanished. Their ruins are on a thousand worlds, and their guardians still keep watch.</span>`));
+        return;
+      }
+      for (const [id, e] of Object.entries(table)) {
+        if (prefix === 'creature' && id === 'glowmoth' && !known.has('creature:glowmoth')) continue;
+        if (!known.has(`${prefix}:${id}`)) {
+          const hint = prefix === 'creature' ? `Lives in: ${e.tags.join(', ')}` : prefix === 'terrain' ? 'An undiscovered kind of world' : prefix === 'relic' ? `${RELIC_RARITY[e.rarity]} relic` : prefix === 'god' ? 'Pray at one of their shrines' : 'Not yet found';
+          body.appendChild(this.row(`<span class="dim">??? · ${hint}</span>`));
+          continue;
+        }
+        let html = `<b style="color:${e.color || (prefix === 'relic' ? relicColor({ type: id }) : '#9fd0ff')}">${esc(e.name)}</b>`;
+        if (prefix === 'creature') html += ` <span class="dim small">${e.behavior} · ${e.hp} hp · ${e.dmg} dmg</span><br><span class="small">${esc(e.desc)}</span>`;
+        if (prefix === 'terrain') html += `<br><span class="small">${esc(e.desc)}</span><br><span class="dim small">Ore: ${e.ore.map(([o]) => o).join(', ')}</span>`;
+        if (prefix === 'structure') html += ` <span class="dim small">${e.kind}</span><br><span class="small">${esc(e.lore)}</span>`;
+        if (prefix === 'relic') html += ` <span class="dim small">${RELIC_RARITY[e.rarity]}</span><br><span class="small">${describeBonus(e.bonus)}</span><br><span class="dim small">${esc(e.lore)}</span>`;
+        if (prefix === 'god') html += ` <span class="dim small">${esc(e.domain)}</span><br><span class="small">${esc(e.lore)}</span><br><span class="dim small">Blessing: ${describeBonus(e.blessing)} · Favor ${this.S.you.favor?.[id] || 0}/5</span>`;
+        body.appendChild(this.row(html));
+      }
     });
   }
 
@@ -314,6 +392,7 @@ export class UI {
         <tr><td>B</td><td>Build blocks</td></tr><tr><td>V</td><td>First / third person</td></tr></table>
         <h3>Anywhere</h3><table>
         <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr>
+        <tr><td>K</td><td>Codex: creatures, terrains, structures, relics, gods</td></tr>
         <tr><td>Enter</td><td>Chat (/p for party)</td></tr><tr><td>H</td><td>This manual</td></tr></table>
         <p class="small">Haven's sectors are safe. Beyond them, pirates hunt and other pilots can fire on you. Ore and loot get better the farther you go.</p>`;
     });
@@ -345,14 +424,17 @@ export class UI {
       const [sx, sz] = sectorOf(me.x, me.z);
       const sec = generateSector(sx, sz, S.seed);
       where = `<div class="big">${esc(sec.name)}</div><div class="dim">${esc(sec.region.name)}</div><div>Sector ${sx}, ${sz} · ${sec.star ? sec.star.type : 'deep space'}</div>`;
-      sub = `<div>${isSafe(sx, sz) ? '<span class="good">Safe zone</span>' : '<span style="color:#ff8a7a">Lawless space</span>'} · Speed ${Math.round(Math.hypot(me.vx, me.vy, me.vz))}</div>` +
+      const terr = TERRITORY[territoryOf(sx, sz, S.seed)];
+      sub = `<div><span style="color:${terr.color}">${terr.name}</span>${isSafe(sx, sz) ? ' <span class="good">(safe)</span>' : ''} · Speed ${Math.round(Math.hypot(me.vx, me.vy, me.vz))}</div>` +
         `<div class="dim">Jump ${ctx.jumpLeft ? 'charging ' + Math.ceil(ctx.jumpLeft / 1000) + 's' : 'ready'} · range ${you.stats.jumpRange}</div>`;
     } else {
       const p = findPlanet(you.planet, S.seed);
-      where = `<div class="big">${esc(p.name)}</div><div class="dim">${p.type} world${p.starter ? ' · starter planet' : ''}</div>`;
-      sub = `<div>${p.starter ? '<span class="good">Haven Landing (safe)</span>' : '<span style="color:#ff8a7a">Wild lands</span>'}</div>`;
+      where = `<div class="big">${esc(p.name)}</div><div class="dim">${TERRAINS[terrainOfPlanet(p)].name}${p.starter ? ' · starter planet' : p.holy ? ' · Holy Capital' : ''}</div>`;
+      const terr = TERRITORY[p.territory] || TERRITORY.wilds;
+      sub = `<div>${p.starter ? '<span class="good">Haven Landing (safe)</span>' : `<span style="color:${terr.color}">${terr.name}</span>`}</div>`;
     }
-    $('status').innerHTML = where + sub + `<div>${you.credits} cr · ${S.online} pilot${S.online === 1 ? '' : 's'} online</div>`;
+    const bless = you.blessing && you.blessing.until > Date.now() ? `<div style="color:#ffe08a">${esc(you.blessing.name)} · ${Math.ceil((you.blessing.until - Date.now()) / 60000)}m</div>` : '';
+    $('status').innerHTML = where + sub + bless + `<div>${you.credits} cr · ${S.online} pilot${S.online === 1 ? '' : 's'} online</div>`;
 
     // Objective: tutorial step first, then the story.
     let obj = '';

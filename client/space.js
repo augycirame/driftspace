@@ -231,10 +231,10 @@ export class SpaceView {
     }
 
     if (s.station) {
-      const st = buildStation();
+      const st = buildStation(s.station.faction, s.station.capital);
       st.position.set(s.station.x, s.station.y, s.station.z);
-      const lb = label(s.station.name, '#9fd0ff', 1.2);
-      lb.position.y = 160;
+      const lb = label(s.station.name, s.station.faction === 'empire' ? '#ffe08a' : s.station.faction === 'rebellion' ? '#ff9a7a' : '#9fd0ff', s.station.capital ? 1.6 : 1.2);
+      lb.position.y = s.station.capital ? 260 : 160;
       st.add(lb);
       group.add(st);
       rec.station = st;
@@ -469,8 +469,8 @@ export class SpaceView {
         const bar = healthBar(n.kind === 'mothership' ? 0.2 : 0.05);
         bar.position.y = n.kind === 'mothership' ? 260 : 20;
         group.add(bar);
-        const name = { pirate: 'Pirate', hollow: 'Hollow', mothership: 'HIVE MOTHERSHIP' }[n.kind];
-        const lb = label(name, n.kind === 'pirate' ? '#ff8a7a' : n.kind === 'hollow' ? '#b0ff6a' : '#d06aff', n.kind === 'mothership' ? 1.6 : 0.9);
+        const name = { pirate: 'Pirate', hollow: 'Hollow', mothership: 'HIVE MOTHERSHIP', imperial: 'Imperial patrol', rebel: 'Rebel raider' }[n.kind];
+        const lb = label(name, { pirate: '#ff8a7a', hollow: '#b0ff6a', mothership: '#d06aff', imperial: '#ffe08a', rebel: '#ff9a7a' }[n.kind], n.kind === 'mothership' ? 1.6 : 0.9);
         lb.position.y = n.kind === 'mothership' ? 300 : 26;
         group.add(lb);
         v = { group, bar };

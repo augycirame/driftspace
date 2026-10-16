@@ -77,10 +77,49 @@ markers on each other, and a party warp that jumps you straight to a member.
 Then a new era begins: the chapters repeat with bigger goals, and the galaxy keeps every change
 from earlier eras. Contribute at any station, and follow progress in the journal (J).
 
+## The content library (`shared/content/`)
+
+Everything planets are made of lives in plain data files. Planet generation draws from them,
+so **adding an entry adds it to the galaxy**. No other code changes are needed.
+
+| File | What's in it |
+|---|---|
+| `terrains.js` | 20 terrains (canyonlands, crystal tundra, fungal forests, toxic swamps, bone wastes, glass deserts…): hills, colors, liquids, ores, flora, and biome tags. Each planet picks one that suits its type. |
+| `creatures.js` | 26 creatures with body plans (quad, serpent, flyer, blob, insect, biped, golem) and behaviors (aggressive, territorial, passive, swarm, plus ruin guardians and faction soldiers). Each planet gets up to three species that match its terrain. |
+| `structures.js` | 16 structures built from simple shapes: Precursor obelisks, monolith rings, sunken ziggurats, fallen colossi, vaults, shrines and temples, Imperial garrisons, Inquisition spires, rebel hideouts, wrecks, pilgrim camps and the Cathedral. Some have loot caches, guardians or soldiers. |
+| `relics.js` | 18 relics with lasting bonuses (damage, armor, speed, mining, jump range, luck, regeneration, shields). Pilots carry two. |
+| `factions.js` | The Radiant Empire, its holy capital Aurelis, the Unbound rebellion, the five ancient gods, and their blessings. |
+
+In game, the **Codex (K)** shows the whole library and fills in as you discover things.
+
+## Powers of the galaxy
+
+- **The Radiant Empire** rules a large region of space from **Aurelis**, its holy capital,
+  where the Emperor is worshipped as the Radiant Throne. Imperial patrols police their space and
+  hunt pirates. Their stations sell better gear to pilots in good standing, and turn away pilots
+  the Empire considers enemies.
+- **Aurelis, the Holy Capital**: a golden cathedral-station (the Sanctum) over a garden world
+  with the Cathedral of the Radiant Throne, pilgrim camps and an Inquisition spire. Citizens of
+  the Empire can pay a tithe there for the Radiant Benediction (+20% damage and armor).
+- **The Unbound** rebellion holds the frontier around the Empire's edge. Rebel raiders and
+  Imperial patrols fight each other there, and every kill counts toward the war score.
+- **Reputation**: destroying a faction's ships or soldiers, raiding their bases, or praying to
+  the old gods (heresy to the Empire) changes your standing. Ranks run from "Wanted" to
+  "Exalted" for the Empire, and "Suspect" to "Hero of the Unbound" for the rebels. Each faction
+  attacks only pilots it considers enemies, and anyone who shoots at it.
+- **The ancient gods**: Vael, Kharon-Ul, Isareth, Mor-Seth and Oruun have shrines and temples on
+  worlds that suit them. Praying gives a 15-minute blessing. After five prayers, a god gives you
+  its own legendary relic.
+- **Ancient ruins**: Precursor obelisks, monolith rings, ziggurats, fallen colossi and sealed
+  vaults, guarded by sentinels and the occasional Vault Colossus. Each ruin's cache can be
+  searched once per pilot, for credits, gear and relics. Ruins appear on about a third of
+  star systems, more often on ancient terrains such as glass deserts and bone wastes.
+
 ## Admin commands
 
-Pilots named in `ADMIN` can type these in chat: `/spawn pirate|hollow [n]`, `/tp <x> <z>`,
-`/land`, `/give <ore> [n]`, `/credits [n]`, `/story [n]` (advance the current goal), `/heal`.
+Pilots named in `ADMIN` can type these in chat: `/spawn pirate|hollow|imperial|rebel [n]`,
+`/tp <x> <z>`, `/land`, `/give <ore> [n]`, `/credits [n]`, `/story [n]` (advance the current
+goal), `/rep empire|rebellion <n>`, `/relic <id>`, `/heal`.
 
 ## How it works
 

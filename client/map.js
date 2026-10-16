@@ -2,6 +2,8 @@
 // Shows stars, stations, wormholes, beacons, party members, story targets and jump range.
 
 import { generateSector, sectorKey, isSafe, SECTOR_SIZE, FAR_REACH } from '/shared/universe.js';
+import { structuresOf } from '/shared/planet.js';
+import { STRUCTURES, GODS, TERRITORY } from '/shared/content/index.js';
 
 const cache = new Map();
 function summary(sx, sz, seed) {
@@ -13,7 +15,12 @@ function summary(sx, sz, seed) {
       star: s.star && { color: s.star.type === 'Black hole' ? '#a070ff' : s.star.color, r: s.star.r, type: s.star.type },
       station: !!s.station, stationName: s.station?.name, wormhole: s.wormhole, name: s.name, region: s.region,
       planets: s.planets.filter((p) => p.landable).length,
+      territory: s.territory, capital: s.capital,
     };
+    const structs = s.planets.filter((p) => p.landable).flatMap((p) => structuresOf(p));
+    m.ruins = structs.filter((st) => STRUCTURES[st.type].kind === 'ruin').length;
+    m.vault = structs.some((st) => st.type === 'vault');
+    m.gods = [...new Set(structs.filter((st) => st.god).map((st) => st.god))];
     if (cache.size > 30000) cache.clear();
     cache.set(k, m);
   }
@@ -73,6 +80,16 @@ export class GalaxyMap {
         g.fillStyle = `hsla(${m.region.hue},60%,${12 + m.region.nebula * 18}%,${0.25 + m.region.density * 0.4})`;
         g.fillRect(x, y, c - 1, c - 1);
         if (isSafe(sx, sz)) { g.fillStyle = 'rgba(120,255,170,0.06)'; g.fillRect(x, y, c - 1, c - 1); }
+        if (m.territory === 'empire' || m.territory === 'capital') { g.fillStyle = 'rgba(242,207,74,0.13)'; g.fillRect(x, y, c - 1, c - 1); }
+        if (m.territory === 'rebellion') { g.fillStyle = 'rgba(255,106,74,0.12)'; g.fillRect(x, y, c - 1, c - 1); }
+        if (m.ruins && c > 18) { g.fillStyle = m.vault ? '#e0b0ff' : '#9a7ac8'; g.beginPath(); g.moveTo(x + 4, y + c - 4); g.lineTo(x + 8, y + c - 11); g.lineTo(x + 12, y + c - 4); g.fill(); }
+        if (m.gods.length && c > 18) { g.fillStyle = GODS[m.gods[0]].color; g.fillRect(x + c - 9, y + c - 9, 4, 4); }
+        if (m.capital) {
+          g.strokeStyle = '#ffe08a'; g.lineWidth = 2;
+          g.beginPath(); g.arc(x + c / 2, y + c / 2, c * 0.45, 0, Math.PI * 2); g.stroke();
+          g.fillStyle = '#ffe08a'; g.font = '11px ui-monospace, monospace'; g.textAlign = 'center';
+          g.fillText('AURELIS', x + c / 2, y - 4);
+        }
         if (m.star) {
           g.fillStyle = m.star.color;
           g.beginPath(); g.arc(x + c / 2, y + c / 2, Math.max(1.5, (m.star.r / 420) * c * 0.28), 0, Math.PI * 2); g.fill();
@@ -120,7 +137,9 @@ export class GalaxyMap {
     const lines = [
       `${hm.name} (${hx}, ${hz})`, hm.region.name, hm.star ? hm.star.type : 'Deep space',
       hm.planets ? `${hm.planets} landable planet${hm.planets > 1 ? 's' : ''}` : '', hm.station ? hm.stationName : '',
-      hm.wormhole ? `Wormhole → ${hm.wormhole.tx}, ${hm.wormhole.tz}` : '', isSafe(hx, hz) ? 'Safe zone' : 'Lawless',
+      hm.wormhole ? `Wormhole → ${hm.wormhole.tx}, ${hm.wormhole.tz}` : '', TERRITORY[hm.territory].name + (isSafe(hx, hz) ? ' (safe)' : ''),
+      hm.ruins ? `${hm.vault ? 'A Precursor vault and ' : ''}${hm.ruins} ancient ruin${hm.ruins > 1 ? 's' : ''}` : '',
+      hm.gods.length ? `Shrines: ${hm.gods.map((gd) => GODS[gd].name.split(',')[0]).join(', ')}` : '',
       `Ore richness ×${hm.region.richness.toFixed(1)}`,
       S.you.mode !== 'space' ? 'Take off to jump' : inRange ? 'Click to jump' : 'Out of jump range',
     ].filter(Boolean);

@@ -253,3 +253,79 @@ test('story arcs advance and change the galaxy', async (t) => {
   assert.ok(story.view().goals[0].target > 40, 'later eras ask for more');
   void findPlanet;
 });
+
+test('factions, shrines, ruins and reputation', { timeout: 60000 }, async (t) => {
+  const { holyCapitalSector } = await import('../shared/universe.js');
+  const { structuresOf } = await import('../shared/planet.js');
+  const { STRUCTURES } = await import('../shared/content/structures.js');
+  const srv = await startServer({ port: 0, dataFile: null, seed: SEED, log: () => {} });
+  t.after(() => srv.close());
+  const world = srv.world;
+  const a = await account(srv.port, 'Zed');
+  const conn = world.connByName('zed');
+  const p = conn.player;
+
+  // A shrine and a lootable ruin on some planet near Haven.
+  let shrine = null, cache = null;
+  for (let x = -4; x <= 4 && !(shrine && cache); x++) for (let z = -4; z <= 4; z++) {
+    for (const pl of generateSector(x, z, SEED).planets.filter((q) => q.landable && !q.starter)) {
+      for (const st of structuresOf(pl)) {
+        if (!shrine && STRUCTURES[st.type].kind === 'shrine') shrine = { pl, st };
+        if (!cache && STRUCTURES[st.type].kind === 'ruin' && STRUCTURES[st.type].cache) cache = { pl, st };
+      }
+    }
+  }
+  assert.ok(shrine && cache, 'found a shrine and a ruin');
+
+  // Pray at the shrine: a blessing, favor, and the Empire disapproves.
+  world.surfaces.place(conn, shrine.pl.id);
+  Object.assign(p, { px: shrine.st.x + shrine.st.radius + 2, pz: shrine.st.z });
+  a.c.send({ t: 'interact', what: 'structure', id: shrine.st.id });
+  const blessed = await a.c.wait((m) => m.t === 'you' && m.blessing);
+  assert.ok(blessed.blessing.bonus);
+  assert.ok(Object.values(blessed.buffs).some((v) => v > 0));
+  assert.equal(p.favor[shrine.st.god], 1);
+  assert.equal(p.rep.empire, -3);
+  assert.ok(p.codex[`god:${shrine.st.god}`]);
+
+  // Search a ruin: loot once, never twice.
+  world.surfaces.place(conn, cache.pl.id);
+  Object.assign(p, { px: cache.st.x + cache.st.radius + 2, pz: cache.st.z });
+  const before = p.credits;
+  a.c.send({ t: 'interact', what: 'structure', id: cache.st.id });
+  await a.c.wait((m) => m.t === 'looted' && m.id === cache.st.id);
+  assert.ok(p.credits > before);
+  a.c.send({ t: 'interact', what: 'structure', id: cache.st.id });
+  await a.c.wait((m) => m.t === 'toast' && /already searched/.test(m.msg));
+  assert.ok(p.codex[`terrain:${(await import('../shared/planet.js')).terrainOf(cache.pl)}`], 'landing fills the codex');
+
+  // Imperial space: a wanted pilot is refused docking.
+  const [cx, cz] = holyCapitalSector(SEED);
+  const sanctum = generateSector(cx, cz, SEED).station;
+  p.mode = 'space';
+  world.teleport(conn, sanctum.x + 100, sanctum.y, sanctum.z);
+  p.rep.empire = -40;
+  a.c.send({ t: 'dock' });
+  await a.c.wait((m) => m.t === 'toast' && /Docking denied/.test(m.msg));
+  // A citizen can dock and receive the Benediction.
+  p.rep.empire = 40;
+  p.credits = 1000;
+  a.c.send({ t: 'dock' });
+  const docked = await a.c.wait((m) => m.t === 'docked');
+  assert.ok(docked.station.capital);
+  a.c.send({ t: 'benediction' });
+  const bene = await a.c.wait((m) => m.t === 'you' && m.blessing?.name === 'Radiant Benediction');
+  assert.ok(bene.buffs.damage >= 0.2);
+
+  // Destroying an Imperial patrol costs Imperial standing and wins rebel favor.
+  p.rep.empire = 0;
+  p.rep.rebellion = 0;
+  world.combat.npcs.clear();
+  const npc = world.combat.spawnNpc('imperial', p.x, p.y, p.z - 120, 1);
+  npc.speed = 0; npc.dmg = 0;
+  for (let i = 0; i < 60 && world.combat.npcs.has(npc.id); i++) { a.c.send({ t: 'fire' }); await sleep(300); }
+  assert.ok(!world.combat.npcs.has(npc.id), 'imperial destroyed');
+  assert.ok(p.rep.empire < 0 && p.rep.rebellion > 0);
+  assert.ok(world.data.war.rebellion >= 1);
+  a.c.close();
+});

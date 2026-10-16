@@ -119,9 +119,22 @@ function lumpy(radius, detail, seed, amount) {
   return g;
 }
 
+export const IMPERIAL_SHIP = [
+  [0, 0, -3, 'cockpit'], [0, 0, -2, 'armor'], [0, 0, -1, 'hull'], [0, 0, 0, 'hull'], [0, 0, 1, 'thruster'],
+  [-1, 0, -1, 'gun'], [1, 0, -1, 'gun'], [-1, 0, 0, 'wing'], [1, 0, 0, 'wing'], [-2, 0, 0, 'wing'], [2, 0, 0, 'wing'], [0, 1, -1, 'shield'],
+];
+export const REBEL_SHIP = [
+  [0, 0, -2, 'cockpit'], [0, 0, -1, 'hull'], [0, 0, 0, 'cargo'], [0, 0, 1, 'thruster'], [-1, 0, 1, 'thruster'],
+  [1, 0, -1, 'gun'], [-1, 0, 0, 'wing'], [1, 0, 0, 'hull'], [0, -1, 0, 'gun'],
+];
+
 export function buildNpc(kind) {
   const group = new THREE.Group();
-  if (kind === 'pirate') {
+  if (kind === 'imperial' || kind === 'rebel') {
+    const s = buildShip(kind === 'imperial' ? IMPERIAL_SHIP : REBEL_SHIP, kind === 'imperial' ? '#f0e0a0' : '#d8603a');
+    group.add(s);
+    group.userData.flames = s.userData.flames;
+  } else if (kind === 'pirate') {
     const s = buildShip(PIRATE_SHIP, '#ff4a3a');
     group.add(s);
     group.userData.flames = s.userData.flames;
@@ -182,34 +195,139 @@ export function buildPerson(color, armor = 0) {
   return g;
 }
 
-export function buildCreature(color, size, seed = 1) {
+// Creatures come in several body plans (from the content library's "shape").
+export function buildCreature(color, size, seed = 1, shape = 'quad') {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.8, flatShading: true });
-  const body = new THREE.Mesh(lumpy(0.7, 1, seed, 0.3), mat);
-  body.scale.set(size, size * 0.75, size * 1.3);
-  body.position.y = size * 0.9;
-  g.add(body);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: '#ffe060' });
-  for (const s of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.09 * size + 0.04, 6, 6), eyeMat);
-    eye.position.set(s * 0.25 * size, size * 1.1, -0.85 * size);
-    g.add(eye);
-  }
+  const eyeMat = new THREE.MeshBasicMaterial({ color: shape === 'golem' ? '#d0a0ff' : '#ffe060' });
   const legs = [];
-  for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18 * size, 0.7 * size, 0.18 * size), mat);
-    leg.position.set(lx * 0.45 * size, size * 0.35, lz * 0.5 * size);
-    g.add(leg);
-    legs.push(leg);
+  const eyes = (y, z, spread = 0.25) => {
+    for (const s of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.09 * size + 0.04, 6, 6), eyeMat);
+      eye.position.set(s * spread * size, y, z);
+      g.add(eye);
+    }
+  };
+  if (shape === 'serpent') {
+    for (let i = 0; i < 6; i++) {
+      const seg = new THREE.Mesh(new THREE.SphereGeometry(size * (0.55 - i * 0.06), 8, 6), mat);
+      seg.position.set(0, size * 0.5, i * size * 0.7);
+      g.add(seg);
+      legs.push(seg);
+    }
+    eyes(size * 0.7, -size * 0.45, 0.2);
+    g.userData.wiggle = true;
+  } else if (shape === 'flyer') {
+    const body = new THREE.Mesh(lumpy(0.5, 1, seed, 0.2), mat);
+    body.scale.set(size * 0.8, size * 0.5, size * 1.2);
+    body.position.y = size * 1.8;
+    g.add(body);
+    for (const s of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(size * 1.6, 0.05, size * 0.8), new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.75, side: THREE.DoubleSide }));
+      wing.position.set(s * size * 0.9, size * 1.85, 0);
+      g.add(wing);
+      legs.push(wing);
+    }
+    eyes(size * 1.9, -size * 0.55, 0.15);
+    const halo = glowSprite(color, size * 2.5, 0.35);
+    halo.position.set(0, size * 1.8, 0);
+    g.add(halo);
+    g.userData.flap = true;
+  } else if (shape === 'blob') {
+    const body = new THREE.Mesh(lumpy(0.8, 2, seed, 0.25), new THREE.MeshStandardMaterial({ color, roughness: 0.3, transparent: true, opacity: 0.85, emissive: color, emissiveIntensity: 0.25 }));
+    body.scale.set(size, size * 0.8, size);
+    body.position.y = size * 0.7;
+    g.add(body);
+    legs.push(body);
+    eyes(size * 0.9, -size * 0.65, 0.2);
+    g.userData.pulse = true;
+  } else if (shape === 'biped' || shape === 'golem') {
+    const golem = shape === 'golem';
+    const torso = new THREE.Mesh(golem ? lumpy(0.6, 0, seed, 0.3) : new THREE.CapsuleGeometry(0.35, 0.7, 4, 8), mat);
+    torso.scale.setScalar(size * (golem ? 1.4 : 1));
+    torso.position.y = size * (golem ? 1.6 : 1.15);
+    g.add(torso);
+    const head = new THREE.Mesh(golem ? new THREE.BoxGeometry(0.5, 0.5, 0.5) : new THREE.SphereGeometry(0.25, 10, 8), mat);
+    head.scale.setScalar(size);
+    head.position.y = size * (golem ? 2.6 : 1.85);
+    g.add(head);
+    eyes(head.position.y, -0.22 * size, 0.1);
+    for (const s of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22 * size * (golem ? 1.6 : 1), 0.8 * size, 0.22 * size * (golem ? 1.6 : 1)), mat);
+      leg.position.set(s * 0.18 * size * (golem ? 1.8 : 1), 0.4 * size, 0);
+      g.add(leg);
+      legs.push(leg);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.16 * size * (golem ? 2 : 1), 0.7 * size, 0.16 * size * (golem ? 2 : 1)), mat);
+      arm.position.set(s * 0.48 * size * (golem ? 1.6 : 1), size * (golem ? 1.6 : 1.15), 0);
+      g.add(arm);
+    }
+    if (!golem) {
+      const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.7), new THREE.MeshStandardMaterial({ color: '#2a2e36', metalness: 0.7 }));
+      gun.position.set(0.4 * size, size * 1.1, -0.35);
+      g.add(gun);
+    } else {
+      const core = glowSprite('#b86bff', size * 3, 0.4);
+      core.position.set(0, size * 1.8, 0);
+      g.add(core);
+    }
+  } else {
+    // quad and insect
+    const insect = shape === 'insect';
+    const body = new THREE.Mesh(lumpy(0.7, 1, seed, 0.3), mat);
+    body.scale.set(size, size * (insect ? 0.5 : 0.75), size * 1.3);
+    body.position.y = size * (insect ? 0.6 : 0.9);
+    g.add(body);
+    eyes(size * (insect ? 0.75 : 1.1), -0.85 * size);
+    const spots = insect ? [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] : [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+    for (const [lx, lz] of spots) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16 * size, (insect ? 0.5 : 0.7) * size, 0.16 * size), mat);
+      leg.position.set(lx * (insect ? 0.6 : 0.45) * size, size * (insect ? 0.25 : 0.35), lz * 0.5 * size);
+      if (insect) leg.rotation.z = lx * 0.6;
+      g.add(leg);
+      legs.push(leg);
+    }
   }
   g.userData.legs = legs;
   return g;
 }
 
-export function buildStation() {
+// A structure from the content library's part list. '@god' colors take the shrine's god color.
+export function buildStructure(def, godColor) {
   const g = new THREE.Group();
-  const metal = new THREE.MeshStandardMaterial({ color: '#8fa6c8', metalness: 0.7, roughness: 0.35 });
-  const dark = new THREE.MeshStandardMaterial({ color: '#2b3d63', metalness: 0.6, roughness: 0.5 });
+  const mats = new Map();
+  const matFor = (color, glow) => {
+    const c = color === '@god' ? godColor || '#b86bff' : color;
+    const key = c + (glow ? '!' : '');
+    if (!mats.has(key)) mats.set(key, new THREE.MeshStandardMaterial({ color: c, roughness: 0.8, metalness: 0.1, flatShading: true, emissive: glow ? c : '#000000', emissiveIntensity: glow ? 0.9 : 0 }));
+    return mats.get(key);
+  };
+  for (const [shape, x, y, z, a, b, c, color, glow, tilt] of def.parts) {
+    let geo;
+    if (shape === 'box') geo = new THREE.BoxGeometry(a, b, c);
+    else if (shape === 'cyl') geo = new THREE.CylinderGeometry(a, a, b, 16);
+    else if (shape === 'cone') geo = new THREE.ConeGeometry(a, b, c || 8);
+    else if (shape === 'sphere') geo = new THREE.SphereGeometry(a, 16, 12);
+    else if (shape === 'ring') geo = new THREE.TorusGeometry(a, b, 8, 32);
+    else continue;
+    const m = new THREE.Mesh(geo, matFor(color, glow));
+    m.position.set(x, y, z);
+    if (tilt) m.rotation.z = tilt;
+    g.add(m);
+    if (glow) {
+      const sp = glowSprite(color === '@god' ? godColor || '#b86bff' : color, Math.max(a, b || 0, c || 0) * 3, 0.5);
+      sp.position.set(x, y, z);
+      g.add(sp);
+    }
+  }
+  return g;
+}
+
+export function buildStation(faction = null, capital = false) {
+  if (capital) return buildSanctum();
+  const g = new THREE.Group();
+  const trim = faction === 'empire' ? '#e8c547' : faction === 'rebellion' ? '#b8502a' : '#8fa6c8';
+  const metal = new THREE.MeshStandardMaterial({ color: trim, metalness: 0.7, roughness: 0.35 });
+  const dark = new THREE.MeshStandardMaterial({ color: faction === 'empire' ? '#e8e4da' : faction === 'rebellion' ? '#4a3a30' : '#2b3d63', metalness: 0.6, roughness: 0.5 });
   const ring = new THREE.Mesh(new THREE.TorusGeometry(120, 12, 12, 48), metal);
   ring.rotation.x = Math.PI / 2;
   g.add(ring);
@@ -227,7 +345,32 @@ export function buildStation() {
     l.position.set(Math.cos(a) * 120, 14, Math.sin(a) * 120);
     g.add(l);
   }
-  g.add(glowSprite('#7fb4ff', 260, 0.35));
+  g.add(glowSprite(faction === 'empire' ? '#ffe08a' : faction === 'rebellion' ? '#ff6a4a' : '#7fb4ff', 260, 0.35));
+  return g;
+}
+
+// The Sanctum of the Radiant Throne: a golden cathedral-station above the holy capital.
+function buildSanctum() {
+  const g = new THREE.Group();
+  const white = new THREE.MeshStandardMaterial({ color: '#f0ece0', metalness: 0.4, roughness: 0.4 });
+  const gold = new THREE.MeshStandardMaterial({ color: '#e8c547', metalness: 0.9, roughness: 0.25, emissive: '#6a5010', emissiveIntensity: 0.4 });
+  const nave = new THREE.Mesh(new THREE.BoxGeometry(90, 70, 220), white);
+  g.add(nave);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(70, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), gold);
+  dome.position.y = 35;
+  g.add(dome);
+  for (const [x, z] of [[-60, -100], [60, -100], [-60, 100], [60, 100]]) {
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(14, 220, 8), white);
+    spire.position.set(x, 60, z);
+    g.add(spire);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(6, 10, 8), gold);
+    tip.position.set(x, 172, z);
+    g.add(tip);
+  }
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(200, 6, 8, 96), gold);
+  halo.rotation.x = Math.PI / 2;
+  g.add(halo);
+  g.add(glowSprite('#ffe8a0', 700, 0.45));
   return g;
 }
 

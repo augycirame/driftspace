@@ -13,7 +13,9 @@ import {
   ORES, ORE_IDS, BLOCKS, UPGRADES, SHIP_PARTS, STARTER_SHIP, WORLD_GRID, BUILD_RANGE, DOCK_RANGE, JUMP_COOLDOWN_MS,
   ASTEROID_REGROW_MS, INVENTORY_SIZE, shipStats, validateShip, cargoTotal, canAfford, upgradeCost, qNormalize,
 } from '../shared/rules.js';
-import { makeItem, itemName, itemValue, shopStock } from '../shared/items.js';
+import { makeItem, makeRelic, itemName, itemValue, shopStock, buffsOf, RELIC_SLOTS } from '../shared/items.js';
+import { FACTIONS, HOLY_CAPITAL, HOSTILE_REP, factionTitle } from '../shared/content/factions.js';
+import { RELICS } from '../shared/content/relics.js';
 import { TUTORIAL } from '../shared/tutorial.js';
 import { goalTarget } from '../shared/story.js';
 import { Accounts } from './accounts.js';
@@ -159,6 +161,7 @@ export class World {
       name, credits: 100, cargo: {}, ship: STARTER_SHIP.map((b) => [...b]), upg: {},
       inv: { items: [pistol], equipped: { weapon: pistol.id } },
       mode: 'surface', planet: STARTER_PLANET_ID, parked: null, tutorial: 0, tutCount: 0, home: '0,0:st', joined: Date.now(),
+      rep: { empire: 0, rebellion: 0 }, favor: {}, blessing: null, looted: {}, codex: {},
     };
   }
 
@@ -176,6 +179,8 @@ export class World {
       credits: rec.credits, cargo: { ...rec.cargo }, ship: rec.ship.map((b) => [...b]), shipRev: 1, upg: { ...rec.upg },
       inv: { items: rec.inv.items.map((i) => ({ ...i })), equipped: { ...rec.inv.equipped } },
       tutorial: rec.tutorial || 0, tutCount: rec.tutCount || 0, home: rec.home || '0,0:st', kills: rec.kills || 0,
+      rep: { empire: 0, rebellion: 0, ...rec.rep }, favor: { ...rec.favor }, blessing: rec.blessing || null,
+      looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
     };
@@ -193,7 +198,7 @@ export class World {
       t: 'welcome', id: conn.id, seed: this.seed, time: Date.now(),
       you: this.selfView(p), beacons: Object.values(this.data.beacons), story: this.story.view(),
     });
-    if (p.mode === 'surface') conn.send(this.surfaces.state(p.planet));
+    if (p.mode === 'surface') conn.send(this.surfaces.state(p.planet, p));
     const party = this.parties.of(key);
     if (party) this.parties.push(party);
     this.broadcast({ t: 'chat', from: null, text: `${p.name} entered the void.` });
@@ -204,13 +209,63 @@ export class World {
     Object.assign(rec, {
       credits: p.credits, cargo: p.cargo, ship: p.ship, upg: p.upg, inv: p.inv, tutorial: p.tutorial, tutCount: p.tutCount,
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
+      rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
     this.dirty = true;
   }
 
+  // Recompute everything derived from gear, relics, blessings and the story.
   restat(p) {
-    p.stats = shipStats(p.ship, p.upg, this.story ? this.story.effects() : {});
+    p.buffs = buffsOf(p.inv, p.blessing);
+    p.stats = shipStats(p.ship, p.upg, this.story ? this.story.effects() : {}, p.buffs);
+    if (this.surfaces && p.inv) this.surfaces.refreshVitals(p);
+    if (p.hull > p.stats.hp) p.hull = p.stats.hp;
+    if (p.shield > p.stats.shield) p.shield = p.stats.shield;
+  }
+
+  // ---- factions, gods and the codex ----------------------------------------------------------
+
+  changeRep(conn, delta, why) {
+    const p = conn.player;
+    const before = {};
+    for (const [f, d] of Object.entries(delta)) {
+      before[f] = factionTitle(f, p.rep[f]);
+      p.rep[f] = Math.max(-100, Math.min(100, p.rep[f] + d));
+    }
+    for (const f of Object.keys(delta)) {
+      const now = factionTitle(f, p.rep[f]);
+      if (now !== before[f]) conn.send({ t: 'toast', msg: `${FACTIONS[f].name}: you are now "${now}".` });
+    }
+    if (why) conn.send({ t: 'chat', from: null, text: why });
+    this.dirty = true;
+    this.sendSelf(conn);
+  }
+
+  hostileTo(faction, p) {
+    return !!faction && p.rep[faction] < HOSTILE_REP;
+  }
+
+  // Mark codex entries ("terrain:duneSea", "creature:sandWyrm"…) as discovered.
+  discover(conn, keys) {
+    const p = conn.player, fresh = keys.filter((k) => !p.codex[k]);
+    if (!fresh.length) return;
+    for (const k of fresh) p.codex[k] = Date.now();
+    conn.send({ t: 'codex', keys: fresh });
+    this.dirty = true;
+  }
+
+  warScore(side, n = 1) {
+    this.data.war ||= { empire: 0, rebellion: 0 };
+    this.data.war[side] += n;
+    this.dirty = true;
+  }
+
+  bless(conn, blessing, minutes) {
+    const p = conn.player;
+    p.blessing = { ...blessing, until: Date.now() + minutes * 60000 };
+    this.restat(p);
+    this.sendSelf(conn);
   }
 
   selfView(p) {
@@ -219,6 +274,7 @@ export class World {
       inv: p.inv, stats: p.stats, hull: p.hull, shield: p.shield, hp: p.hp, maxHp: p.maxHp, armor: p.armor,
       mode: p.mode, planet: p.planet, parked: p.parked, x: p.x, y: p.y, z: p.z, q: p.q, px: p.px, py: p.py, pz: p.pz,
       tutorial: p.tutorial, tutCount: p.tutCount, home: p.home, kills: p.kills,
+      rep: p.rep, favor: p.favor, blessing: p.blessing, buffs: p.buffs, codex: Object.keys(p.codex), war: this.data.war || { empire: 0, rebellion: 0 },
     };
   }
 
@@ -354,17 +410,39 @@ export class World {
 
   // ---- stations -----------------------------------------------------------------------------
 
-  dockedStation(p) {
+  // The station you're docked at; faction stations turn away pilots they consider enemies.
+  dockedStation(p, allowHostile = false) {
     if (p.mode !== 'space' || p.dead) return null;
     const [sx, sz] = sectorOf(p.x, p.z);
     const st = generateSector(sx, sz, this.seed).station;
-    return st && Math.hypot(st.x - p.x, st.y - p.y, st.z - p.z) <= DOCK_RANGE ? st : null;
+    if (!st || Math.hypot(st.x - p.x, st.y - p.y, st.z - p.z) > DOCK_RANGE) return null;
+    if (!allowHostile && this.hostileTo(st.faction, p)) return null;
+    return st;
   }
 
   needDock(conn) {
     const st = this.dockedStation(conn.player);
-    if (!st) conn.send({ t: 'toast', msg: 'Dock at a station first.' });
+    if (!st) {
+      const near = this.dockedStation(conn.player, true);
+      conn.send({ t: 'toast', msg: near ? `Docking denied: ${FACTIONS[near.faction].name} considers you an enemy.` : 'Dock at a station first.' });
+    }
     return st;
+  }
+
+  // Faction stations sell better gear to pilots they trust.
+  shopRichness(st, p) {
+    return st.richness + (st.faction && p.rep[st.faction] >= 30 ? 2 : 0) + (st.capital ? 2 : 0);
+  }
+
+  on_benediction(conn) {
+    const p = conn.player, st = this.needDock(conn);
+    const b = HOLY_CAPITAL.blessing;
+    if (!st || !st.capital) return;
+    if (p.rep.empire < b.minRep) return conn.send({ t: 'toast', msg: `The priests will only bless a Citizen of the Empire (reputation ${b.minRep}+).` });
+    if (p.credits < b.tithe) return conn.send({ t: 'toast', msg: `The tithe is ${b.tithe} credits.` });
+    p.credits -= b.tithe;
+    this.bless(conn, { god: 'throne', name: b.name, bonus: b.bonus }, b.minutes);
+    this.changeRep(conn, { empire: 2 }, `You kneel before the Radiant Throne and receive the ${b.name}.`);
   }
 
   on_dock(conn) {
@@ -377,7 +455,8 @@ export class World {
     const eff = this.story.effects();
     const gate = eff.gateBuilt && (st.id === '0,0:st' || st.id === `${FAR_REACH[0]},${FAR_REACH[1]}:st`);
     this.sendSelf(conn);
-    conn.send({ t: 'docked', station: { id: st.id, name: st.name, richness: st.richness }, gate, wants: ORE_IDS.filter((o) => this.story.wants(o) > 0) });
+    conn.send({ t: 'docked', station: { id: st.id, name: st.name, richness: st.richness, faction: st.faction, capital: st.capital }, gate, wants: ORE_IDS.filter((o) => this.story.wants(o) > 0) });
+    if (st.capital) this.discover(conn, ['place:capital']);
     this.tutorial(conn, 'dock');
   }
 
@@ -452,7 +531,7 @@ export class World {
 
   on_shop(conn) {
     const st = this.needDock(conn);
-    if (st) this.openShop(conn, st.id, st.richness, st.name);
+    if (st) this.openShop(conn, st.id, this.shopRichness(st, conn.player), st.name);
   }
 
   shopValid(conn) {
@@ -496,8 +575,12 @@ export class World {
     const p = conn.player;
     const it = p.inv.items.find((i) => i.id === id);
     if (!it) return;
-    p.inv.equipped[it.kind === 'weapon' ? 'weapon' : it.type] = it.id;
-    this.surfaces.refreshVitals(p);
+    if (it.kind === 'relic') {
+      if (RELIC_SLOTS.some((s) => p.inv.equipped[s] === it.id)) return;
+      const slot = RELIC_SLOTS.find((s) => !p.inv.equipped[s]) || RELIC_SLOTS[0];
+      p.inv.equipped[slot] = it.id;
+    } else p.inv.equipped[it.kind === 'weapon' ? 'weapon' : it.type] = it.id;
+    this.restat(p);
     this.sendSelf(conn);
   }
 
@@ -505,7 +588,7 @@ export class World {
     const p = conn.player;
     if (typeof slot !== 'string') return;
     delete p.inv.equipped[slot];
-    this.surfaces.refreshVitals(p);
+    this.restat(p);
     this.sendSelf(conn);
   }
 
@@ -515,7 +598,7 @@ export class World {
     if (i < 0) return;
     p.inv.items.splice(i, 1);
     for (const [slot, eid] of Object.entries(p.inv.equipped)) if (eid === id) delete p.inv.equipped[slot];
-    this.surfaces.refreshVitals(p);
+    this.restat(p);
     this.sendSelf(conn);
   }
 
@@ -528,6 +611,7 @@ export class World {
     } else {
       p.inv.items.push(item);
       conn.send({ t: 'loot', item, name: itemName(item) });
+      if (item.kind === 'relic') this.discover(conn, [`relic:${item.type}`]);
     }
     this.dirty = true;
     this.sendSelf(conn);
@@ -637,7 +721,7 @@ export class World {
     switch (cmd) {
       case 'spawn': {
         const kind = args[0] || 'pirate';
-        if (p.mode !== 'space' || !['pirate', 'hollow'].includes(kind)) return reply('Usage (in space): /spawn pirate|hollow [count]');
+        if (p.mode !== 'space' || !['pirate', 'hollow', 'imperial', 'rebel'].includes(kind)) return reply('Usage (in space): /spawn pirate|hollow|imperial|rebel [count]');
         for (let i = 0; i < Math.min(10, Number(args[1]) || 1); i++) this.combat.spawnNpc(kind, p.x + (Math.random() - 0.5) * 600, p.y, p.z - 700 + (Math.random() - 0.5) * 300, 1.5);
         return reply(`Spawned ${kind}.`);
       }
@@ -672,12 +756,22 @@ export class World {
         this.sendSelf(conn);
         return reply(`Landed on ${pl.name}.`);
       }
+      case 'rep': {
+        const f = args[0], n = Number(args[1]);
+        if (!FACTIONS[f] || !Number.isFinite(n)) return reply('Usage: /rep empire|rebellion <amount>');
+        return this.changeRep(conn, { [f]: n });
+      }
+      case 'relic': {
+        const id = args[0];
+        if (!RELICS[id]) return reply(`Usage: /relic <${Object.keys(RELICS).join('|')}>`);
+        return this.giveItem(conn, makeRelic(id));
+      }
       case 'heal':
         p.hull = p.stats.hp; p.shield = p.stats.shield; p.hp = p.maxHp;
         this.sendSelf(conn);
         return reply('Healed.');
       default:
-        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /heal');
+        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /heal');
     }
   }
 
@@ -717,6 +811,15 @@ export class World {
   // ---- simulation ---------------------------------------------------------------------------
 
   tick(dt, now) {
+    for (const c of this.conns()) {
+      const p = c.player;
+      if (p.blessing && p.blessing.until < now) {
+        c.send({ t: 'toast', msg: `${p.blessing.name} has faded.` });
+        p.blessing = null;
+        this.restat(p);
+        this.sendSelf(c);
+      }
+    }
     this.mineTick(dt, now);
     this.combat.tick(dt, now);
     this.surfaces.tick(dt, now);
@@ -774,7 +877,7 @@ export class World {
           needShip(p);
           players.push({ id: o.id, key: p.key, name: p.name, color: p.color, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, q: p.q, thrust: p.thrust, mining: p.mining, hull: p.hull, maxHull: p.stats.hp, rev: p.shipRev });
         }
-        c.send({ t: 'snap', time: now, mode: 'space', players, npcs: this.combat.npcsIn(c.subs), ships, online, mining: me.mining });
+        c.send({ t: 'snap', time: now, mode: 'space', players, npcs: this.combat.npcsIn(c.subs, me), ships, online, mining: me.mining });
       } else {
         const s = this.surfaces.snapshot(c);
         for (const pk of s.parked) { const oc = this.connByName(pk.key); if (oc) needShip(oc.player); }
