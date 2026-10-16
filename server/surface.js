@@ -209,6 +209,7 @@ export class Surfaces {
     if (c.hp > 0) return;
     inst.creatures.delete(c.id);
     this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
+    this.w.quests.onKill(conn, inst.planet.id, c);
     if (c.behavior === 'native') {
       if (c.npc) inst.natives.delete(c.npc);
       this.w.politics.npcKilled(conn, inst.planet.id, c);
@@ -391,6 +392,7 @@ export class Surfaces {
     if (def.kind === 'imperial') this.w.changeRep(conn, { empire: -5 }, 'The Empire will hear you robbed its garrison.');
     if (def.kind === 'rebel') this.w.changeRep(conn, { rebellion: -5 }, 'The Unbound will remember who raided their cache.');
     conn.send({ t: 'looted', planet: inst.planet.id, id: st.id });
+    this.w.quests.onEvent(conn, 'search', { pid: inst.planet.id, st: st.id });
     this.w.dirty = true;
     this.w.sendSelf(conn);
   }

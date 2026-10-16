@@ -21,6 +21,11 @@ services:
       # Render dashboard (Environment tab); it isn't stored in this file.
       - key: ADMIN
         sync: false
+      # Optional: a Claude API key lets townsfolk hold real conversations and lets the AI
+      # director run the galaxy. Without it, NPCs use scripted dialogue. Set it in the
+      # dashboard; it isn't stored here. NPC_MODEL and AI_DAILY_LIMIT tune model and cost.
+      - key: ANTHROPIC_API_KEY
+        sync: false
     disk:
       name: world
       mountPath: /var/data

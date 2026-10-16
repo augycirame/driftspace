@@ -27,6 +27,8 @@ import { StoryDirector } from './story.js';
 import { Dungeons } from './dungeon.js';
 import { Politics } from './politics.js';
 import { Talk } from './talk.js';
+import { Quests } from './quests.js';
+import { AI } from './ai.js';
 import { townsOf } from '../shared/towns.js';
 
 const TICK_MS = 100;
@@ -50,6 +52,9 @@ export class World {
     this.politics = new Politics(this);
     this.surfaces = new Surfaces(this);
     this.talk = new Talk(this);
+    this.quests = new Quests(this);
+    this.ai = new AI(log);
+    if (this.ai.enabled) log('AI townsfolk enabled');
     this.dungeons = new Dungeons(this);
   }
 
@@ -171,7 +176,7 @@ export class World {
       inv: { items: [pistol], equipped: { weapon: pistol.id } },
       mode: 'surface', planet: STARTER_PLANET_ID, parked: null, tutorial: 0, tutCount: 0, home: '0,0:st', joined: Date.now(),
       rep: { empire: 0, rebellion: 0 }, favor: {}, blessing: null, looted: {}, codex: {},
-      standing: {}, coins: {}, goods: {},
+      standing: {}, coins: {}, goods: {}, quests: [], questsDone: 0,
     };
   }
 
@@ -192,6 +197,7 @@ export class World {
       rep: { empire: 0, rebellion: 0, ...rec.rep }, favor: { ...rec.favor }, blessing: rec.blessing || null,
       looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
       standing: { ...rec.standing }, coins: { ...rec.coins }, goods: { ...rec.goods },
+      quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, charm: { ...rec.charm },
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
     };
@@ -210,6 +216,7 @@ export class World {
       you: this.selfView(p), beacons: Object.values(this.data.beacons), story: this.story.view(),
     });
     if (p.mode === 'surface') conn.send(this.surfaces.state(p.planet, p));
+    this.quests.sync(conn);
     const party = this.parties.of(key);
     if (party) this.parties.push(party);
     this.broadcast({ t: 'chat', from: null, text: `${p.name} entered the void.` });
@@ -221,7 +228,7 @@ export class World {
       credits: p.credits, cargo: p.cargo, ship: p.ship, upg: p.upg, inv: p.inv, tutorial: p.tutorial, tutCount: p.tutCount,
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
       rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
-      standing: p.standing, coins: p.coins, goods: p.goods,
+      standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, charm: p.charm,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
     this.dirty = true;
@@ -336,6 +343,8 @@ export class World {
   on_land(conn, { planet }) { if (typeof planet === 'string') this.surfaces.land(conn, planet); }
   on_fire(conn) { this.combat.fire(conn); }
   on_talk_opt(conn, m) { if (typeof m.id === 'string') this.talk.choose(conn, m); }
+  on_talk_say(conn, m) { if (typeof m.id === 'string') this.talk.say(conn, m).catch((e) => this.log('talk error', e)); }
+  on_quest_abandon(conn, m) { if (typeof m.id === 'string') this.quests.abandon(conn, m); }
   on_market_buy(conn, m) { if (typeof m.good === 'string') this.talk.buy(conn, m); }
   on_market_sell(conn, m) { if (typeof m.good === 'string') this.talk.sell(conn, m); }
   on_exchange(conn, m) { if (m.dir === 'buy' || m.dir === 'sell') this.talk.exchange(conn, m); }
@@ -882,6 +891,7 @@ export class World {
     this.dungeons.tick(dt, now);
     this.story.tick(now);
     this.politics.tick(now);
+    this.quests.tick(now);
     this.snapshots(now);
   }
 

@@ -29,6 +29,7 @@ export class Dungeons {
     const theme = DUNGEON_THEMES[def.dungeon];
     const seed = dungeonSeed(planet, st.id), depth = dungeonDepth(planet);
     const layout = generateDungeon(def.dungeon, seed, depth);
+    const stId = st.id;
     const enemies = new Map();
     for (const e of layout.enemies) {
       const s = creatureStats(planet, e.species);
@@ -41,7 +42,7 @@ export class Dungeons {
     }
     const inst = {
       key, planet, st, theme: def.dungeon, themeDef: theme, seed, depth, layout, enemies,
-      opened: {}, bossDead: false, members: new Set(), emptySince: 0,
+      opened: {}, bossDead: false, members: new Set(), emptySince: 0, stId,
     };
     this.instances.set(key, inst);
     return inst;
@@ -166,6 +167,7 @@ export class Dungeons {
     if (!e.boss && Math.random() < 0.15 * luck) this.w.giveItem(conn, randomItem(inst.planet.richness + 1));
     if (e.boss) {
       inst.bossDead = true;
+      for (const c of crew) this.w.quests.onEvent(c, 'dungeon', { pid: inst.planet.id, st: inst.stId });
       const name = CREATURES[e.species].name;
       this.toInstance(inst, { t: 'transmission', title: `${name.toUpperCase()} DEFEATED`, lines: [`${name} falls. The deepest chamber of the ${inst.themeDef.name} is open.`] });
       this.toInstance(inst, { t: 'boss', key: inst.key });

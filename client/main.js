@@ -274,6 +274,7 @@ function onMessage(m) {
     case 'talk_line': ui.talkLine(m); break;
     case 'talk_end': if (ui.current?.kind === 'talk') ui.close(); break;
     case 'market': ui.market(m); break;
+    case 'quests': S.quests = m.list; ui.refresh(); break;
     case 'politics': ui.politics(m.view); break;
     case 'story': {
       const hadGate = S.effects?.gateBuilt;
@@ -524,6 +525,14 @@ function surfaceFrame(dt, now) {
   const dots = [];
   for (const d of deposits(surface.planet)) if ((surface.data.deposits[d.id] ?? d.amount) > 0) dots.push(dot(d.x, d.z, ORES[d.ore].color, 4));
   for (const c of S.creatures.values()) dots.push(dot(c.x, c.z, c.hostile ? '#ff5a4a' : '#e8e0a0', 4));
+  // Quest targets on this world, pinned to the radar's edge when out of range.
+  for (const q of S.quests || []) {
+    if (q.pid !== surface.planetId || !q.mark) continue;
+    const d = dot(q.mark[0], q.mark[1], '#ffd84a', 7);
+    const l = Math.hypot(d.x, d.y);
+    if (l > 0.95) { d.x *= 0.95 / l; d.y *= 0.95 / l; }
+    dots.push(d);
+  }
   for (const { st, def } of surface.structures || []) dots.push(dot(st.x, st.z, def.kind === 'shrine' ? '#c27bff' : def.kind === 'imperial' || def.kind === 'holy' ? '#ffe08a' : def.kind === 'rebel' ? '#ff8a5a' : '#b8a8d8', 6));
   for (const o of S.others.values()) dots.push(dot(o.x, o.z, o.color, 4));
   if (you.parked) dots.push(dot(you.parked.x, you.parked.z, '#7fb4ff', 7));

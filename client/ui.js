@@ -264,6 +264,22 @@ export class UI {
 
   journal() {
     this.open('journal', 'Journal', (body) => {
+      // Quests from the people of the worlds.
+      const qs = this.S.quests || [];
+      if (qs.length) {
+        const h = document.createElement('h3');
+        h.textContent = 'Quests';
+        body.appendChild(h);
+        for (const q of qs) {
+          const el = document.createElement('div');
+          el.className = 'goal';
+          el.innerHTML = `<b style="color:#f0d8a0">${esc(q.title)}</b> <span class="small dim">· ${esc(q.giver || '')} of ${esc(q.town || '')}, ${esc(q.planet || '')}</span>` +
+            (q.note ? `<div class="small" style="color:#ffe08a">${esc(q.note)}</div>` : '') +
+            q.steps.map((s, i) => `<div class="small${i > q.step ? ' dim' : ''}">${s.done ? '<span class="good">✓</span>' : i === q.step ? '▸' : '○'} ${esc(s.text)}${s.need && i === q.step && s.have != null && s.type !== 'bring' ? ` (${s.have}/${s.need})` : ''}</div>`).join('');
+          el.appendChild(this.button('Abandon', () => this.send({ t: 'quest_abandon', id: q.id }), 'alt small'));
+          body.appendChild(el);
+        }
+      }
       const st = this.S.story;
       if (!st) return;
       const head = document.createElement('div');
@@ -421,6 +437,7 @@ export class UI {
     if (m.you) t.lines.push({ who: 'You', text: m.you });
     if (m.line) t.lines.push({ who: t.npc.name, text: m.line });
     if (m.options) t.options = m.options;
+    if (m.note) t.lines.push({ who: '', text: m.note });
     t.waiting = false;
     if (this.current?.kind === 'talk') this.renderTalk($('panel-body'), true);
   }
@@ -438,7 +455,7 @@ export class UI {
     log.className = 'talklog';
     for (const l of t.lines.slice(-14)) {
       const p = document.createElement('p');
-      p.innerHTML = `<b${l.who === 'You' ? ' class="you"' : ''}>${esc(l.who)}:</b> ${esc(l.text)}`;
+      p.innerHTML = l.who ? `<b${l.who === 'You' ? ' class="you"' : ''}>${esc(l.who)}:</b> ${esc(l.text)}` : `<i class="dim">${esc(l.text)}</i>`;
       log.appendChild(p);
     }
     if (t.waiting) { const p = document.createElement('p'); p.className = 'dim'; p.textContent = `${t.npc.name} is thinking…`; log.appendChild(p); }
@@ -630,6 +647,11 @@ export class UI {
 
     // Objective: tutorial step first, then the story.
     let obj = '';
+    const q = (S.quests || [])[0];
+    if (q && q.steps[q.step]) {
+      const s = q.steps[q.step];
+      obj += `<b style="color:#f0d8a0">${esc(q.title)}</b><br>${esc(s.text)}${s.need && s.have != null ? ` (${s.have}/${s.need})` : ''}${q.note ? `<br><span style="color:#ffe08a" class="small">${esc(q.note)}</span>` : ''}<br><br>`;
+    }
     const step = TUTORIAL[you.tutorial];
     if (step) obj += `<b>Training ${you.tutorial + 1}/${TUTORIAL.length}</b><br>${esc(step.text)}${step.count ? ` (${you.tutCount || 0}/${step.count})` : ''}<br><br>`;
     if (S.story) {
