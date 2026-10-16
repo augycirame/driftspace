@@ -7,6 +7,8 @@ import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, itemName, weaponStats, itemValue, r
 import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle, ALIEN_RACES, DUNGEON_THEMES } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
 import { terrainOf as terrainOfPlanet } from '/shared/planet.js';
+import { PEOPLES, CLIMATES } from '/shared/content/peoples.js';
+import { climateOf, sunAt, weatherAt, weatherInfo, townsOf } from '/shared/towns.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -108,7 +110,8 @@ export class UI {
   }
 
   refresh() {
-    if (this.current && this.isOpen()) this.rerender();
+    // Conversations keep their place (and whatever you're typing) when stats update.
+    if (this.current && this.isOpen() && this.current.kind !== 'talk') this.rerender();
     this.renderPalette();
   }
 
@@ -405,6 +408,145 @@ export class UI {
     });
   }
 
+  // ---- talking to people ---------------------------------------------------------------------
+
+  talk(m) {
+    this.talkState = { id: m.id, npc: m.npc, lines: [{ who: m.npc.name, text: m.line }], options: m.options, ai: m.ai };
+    this.open('talk', m.npc.name, (body) => this.renderTalk(body));
+  }
+
+  talkLine(m) {
+    const t = this.talkState;
+    if (!t || t.id !== m.id) return;
+    if (m.you) t.lines.push({ who: 'You', text: m.you });
+    if (m.line) t.lines.push({ who: t.npc.name, text: m.line });
+    if (m.options) t.options = m.options;
+    t.waiting = false;
+    if (this.current?.kind === 'talk') this.renderTalk($('panel-body'), true);
+  }
+
+  renderTalk(body, keepInput = false) {
+    const t = this.talkState;
+    const typed = keepInput ? body.querySelector('input')?.value || '' : '';
+    body.innerHTML = '';
+    body.className = 'dialogue talk';
+    const card = document.createElement('p');
+    card.className = 'small dim';
+    card.textContent = `${t.npc.role} · ${t.npc.people} of ${t.npc.town}${t.npc.realm ? ' · ' + t.npc.realm : ''}`;
+    body.appendChild(card);
+    const log = document.createElement('div');
+    log.className = 'talklog';
+    for (const l of t.lines.slice(-14)) {
+      const p = document.createElement('p');
+      p.innerHTML = `<b${l.who === 'You' ? ' class="you"' : ''}>${esc(l.who)}:</b> ${esc(l.text)}`;
+      log.appendChild(p);
+    }
+    if (t.waiting) { const p = document.createElement('p'); p.className = 'dim'; p.textContent = `${t.npc.name} is thinking…`; log.appendChild(p); }
+    body.appendChild(log);
+    if (t.ai) {
+      const row = document.createElement('div');
+      row.className = 'talkrow';
+      const input = document.createElement('input');
+      input.placeholder = `Say something to ${t.npc.name}…`;
+      input.maxLength = 240;
+      input.value = typed;
+      const sayIt = () => {
+        const text = input.value.trim();
+        if (!text || t.waiting) return;
+        t.waiting = true;
+        t.lines.push({ who: 'You', text });
+        input.value = '';
+        this.send({ t: 'talk_say', id: t.id, text });
+        this.renderTalk(body);
+      };
+      input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') sayIt(); if (e.key === 'Escape') this.close(); });
+      row.appendChild(input);
+      row.appendChild(this.button('Say', sayIt));
+      body.appendChild(row);
+      setTimeout(() => input.focus(), 0);
+    }
+    const opts = document.createElement('div');
+    opts.className = 'talkopts';
+    for (const [id, text] of t.options) {
+      opts.appendChild(this.button(text, () => {
+        if (id === 'bye') { this.send({ t: 'talk_opt', id: t.id, opt: id }); return this.close(); }
+        t.lines.push({ who: 'You', text });
+        this.send({ t: 'talk_opt', id: t.id, opt: id });
+        this.renderTalk(body);
+      }, 'alt'));
+    }
+    body.appendChild(opts);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  market(m) {
+    this.marketState = m;
+    const coin = m.coin || ['coin', 'coins'];
+    this.open('market', `${m.town}${m.goods.length ? ' market' : ' moneychanger'}`, (body) => {
+      const st = this.marketState, you = this.S.you;
+      const p = document.createElement('p');
+      p.innerHTML = `${esc(st.realm || '')}<br>Purse: <b>${st.wallet} ${esc(coin[1])}</b> · ${you.credits} cr · 1 ${esc(coin[0])} ≈ ${st.rate} cr` +
+        (st.goods.length ? `<br><span class="small dim">Carrying ${st.carried}/${st.cap} goods. Short on ${esc(coin[1])}? Credits cover the difference at a 10% markup.</span>` : '');
+      body.appendChild(p);
+      for (const g of st.goods) {
+        const wrap = document.createElement('span');
+        wrap.appendChild(this.button(`Buy ${g.buy}`, () => this.send({ t: 'market_buy', good: g.id, qty: 1 })));
+        wrap.appendChild(this.button('×5', () => this.send({ t: 'market_buy', good: g.id, qty: 5 }), 'alt'));
+        const sell = this.button(`Sell ${g.sell}`, () => this.send({ t: 'market_sell', good: g.id, qty: 1 }), 'alt');
+        sell.disabled = !g.have;
+        wrap.appendChild(sell);
+        body.appendChild(this.row(`<b>${esc(g.name)}</b><br><span class="small dim">${g.have ? `you have ${g.have}` : '&nbsp;'}</span>`, wrap));
+      }
+      const h = document.createElement('h3');
+      h.textContent = 'Money changing (5% fee)';
+      body.appendChild(h);
+      for (const n of [10, 50, 200]) {
+        const wrap = document.createElement('span');
+        wrap.appendChild(this.button(`Buy ${n} ${coin[1]}`, () => this.send({ t: 'exchange', dir: 'buy', amount: n })));
+        const sb = this.button(`Sell ${n}`, () => this.send({ t: 'exchange', dir: 'sell', amount: n }), 'alt');
+        sb.disabled = st.wallet < 1;
+        wrap.appendChild(sb);
+        body.appendChild(this.row(`<span>${n} ${esc(coin[1])} ≈ ${Math.ceil(n * st.rate * 1.05)} cr</span>`, wrap));
+      }
+    });
+  }
+
+  // The realms of this world: rulers, wars, alliances, troubles and where you stand.
+  politics(v) {
+    if (!v) return;
+    this.open('politics', 'Realms of this world', (body) => {
+      const name = (id) => v.realms.find((r) => r.id === id)?.name || '?';
+      const word = (x) => (x <= -60 ? 'enemy' : x <= -30 ? 'unwelcome' : x < 20 ? 'stranger' : x < 50 ? 'friend' : x < 80 ? 'honored' : 'hero');
+      if (!v.realms.length) body.innerHTML = '<p class="dim">Nobody lives here.</p>';
+      for (const r of v.realms) {
+        const div = document.createElement('div');
+        div.className = 'realm';
+        const rel = Object.entries(r.relations).map(([id, x]) => `${esc(name(id))}: <span style="color:${x < -30 ? '#ff8a7a' : x > 40 ? '#8affb0' : '#e8e0c0'}">${x > 0 ? '+' : ''}${x}</span>`).join(' · ');
+        div.innerHTML = `<h3>${esc(r.name)}</h3>
+          <div class="small">${esc(PEOPLES[r.people].name)} (${esc(PEOPLES[r.people].plural)}) · ${esc(r.government)}${r.ruler ? ` · ruled by <b>${esc(r.ruler)}</b>` : ''}</div>
+          <div class="small">Towns: ${r.towns.map((t) => `${esc(t.name)} <span class="dim">(${t.size}${t.capital ? ', capital' : ''})</span>`).join(', ') || 'none'}</div>
+          <div class="small">Stability ${r.stability}/100 · Treasury ${r.treasury} ${esc(r.coin[1])} · 1 ${esc(r.coin[0])} ≈ ${r.rate} cr</div>
+          ${r.war ? `<div style="color:#ff8a7a">At war with the ${esc(name(r.war.with))} (score ${r.war.score})</div>` : ''}
+          ${r.allies.length ? `<div style="color:#8affb0">Allied with ${r.allies.map((a) => esc(name(a))).join(', ')}</div>` : ''}
+          ${r.event ? `<div style="color:#ffe08a">${{ famine: 'Famine', plague: 'Plague', festival: 'Festival', raiders: 'Raiders abroad' }[r.event] || r.event}</div>` : ''}
+          ${rel ? `<div class="small dim">Relations: ${rel}</div>` : ''}
+          <div class="small">You are <b>${word(r.standing)}</b> here (${r.standing > 0 ? '+' : ''}${r.standing}).</div>`;
+        body.appendChild(div);
+      }
+      if (v.log.length) {
+        const h = document.createElement('h3');
+        h.textContent = 'Chronicle';
+        body.appendChild(h);
+        for (const e of [...v.log].reverse()) {
+          const p = document.createElement('p');
+          p.className = 'small';
+          p.innerHTML = `<span class="dim">${new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span> ${esc(e.text)}`;
+          body.appendChild(p);
+        }
+      }
+    });
+  }
+
   dialogue(who) {
     this.open('dialogue', who, (body) => {
       body.className = 'dialogue';
@@ -431,7 +573,7 @@ export class UI {
         <tr><td>E</td><td>Interact / board your ship</td></tr><tr><td>Y</td><td>Shipyard (next to your ship)</td></tr>
         <tr><td>B</td><td>Build blocks</td></tr><tr><td>V</td><td>First / third person</td></tr></table>
         <h3>Anywhere</h3><table>
-        <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr>
+        <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr><tr><td>R</td><td>Realms of this world (on a planet)</td></tr><tr><td>E</td><td>Talk to people in towns</td></tr>
         <tr><td>K</td><td>Codex: creatures, terrains, structures, relics, gods</td></tr>
         <tr><td>O</td><td>Options (art style, graphics quality)</td></tr>
         <tr><td>Enter</td><td>Chat (/p for party)</td></tr><tr><td>H</td><td>This manual</td></tr></table>
@@ -477,6 +619,11 @@ export class UI {
       where = `<div class="big">${esc(p.name)}</div><div class="dim">${TERRAINS[terrainOfPlanet(p)].name}${p.starter ? ' · starter planet' : p.holy ? ' · Holy Capital' : ''}</div>`;
       const terr = TERRITORY[p.territory] || TERRITORY.wilds;
       sub = `<div>${p.starter ? '<span class="good">Haven Landing (safe)</span>' : `<span style="color:${terr.color}">${terr.name}</span>`}</div>`;
+      const t = Date.now() / 1000 + (S.timeOffset || 0) / 1000, sun = sunAt(p, t), wx = weatherInfo(weatherAt(p, t));
+      const hh = Math.floor(sun.hour), mm = Math.floor((sun.hour % 1) * 60);
+      const town = townsOf(p).find((x) => Math.hypot(x.x - me.x, x.z - me.z) < x.radius + 15);
+      sub += `<div class="dim">${CLIMATES[climateOf(p)].name} · ${wx.name}${wx.exposure ? ' <span style="color:#ff9a7a">(exposure)</span>' : ''} · ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}${sun.night ? ' night' : ''}</div>`;
+      if (town) sub += `<div style="color:#f0d8a0">${esc(town.name)} <span class="dim">(R: realms)</span></div>`;
     }
     const bless = you.blessing && you.blessing.until > Date.now() ? `<div style="color:#ffe08a">${esc(you.blessing.name)} · ${Math.ceil((you.blessing.until - Date.now()) / 60000)}m</div>` : '';
     $('status').innerHTML = where + sub + bless + `<div>${you.credits} cr · ${S.online} pilot${S.online === 1 ? '' : 's'} online</div>`;

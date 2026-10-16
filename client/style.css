@@ -121,3 +121,16 @@ button.x { width: auto; margin: 0; padding: 4px 10px; background: transparent; c
   #yard-wrap { flex-direction: column; }
   #yard-side { width: 100%; height: 45%; }
 }
+
+/* Conversations, markets and realms */
+.talk .talklog { max-height: 42vh; overflow-y: auto; margin: 8px 0; padding-right: 4px; }
+.talk .talklog p { margin: 6px 0; font-size: 14px; }
+.talk .talklog b { color: #f0d8a0; }
+.talk .talklog b.you { color: #9fd0ff; }
+.talkrow { display: flex; gap: 6px; margin: 8px 0; }
+.talkrow input { flex: 1; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.2); color: inherit; padding: 6px 8px; border-radius: 6px; font: inherit; }
+.talkopts { display: flex; flex-wrap: wrap; gap: 6px; }
+.talkopts button { text-align: left; }
+.realm { border-top: 1px solid rgba(255, 255, 255, 0.12); padding: 6px 0 10px; }
+.realm h3 { margin: 6px 0 4px; }
+.realm div { margin: 2px 0; }

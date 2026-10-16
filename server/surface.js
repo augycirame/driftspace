@@ -13,6 +13,8 @@ import { STRUCTURES } from '../shared/content/structures.js';
 import { GODS, PRAYER } from '../shared/content/factions.js';
 import { RELICS } from '../shared/content/relics.js';
 import { ALIEN_RACES, alienFolk, alienWarrior } from '../shared/content/aliens.js';
+import { townsOf, weatherAt, weatherInfo } from '../shared/towns.js';
+import { Natives } from './natives.js';
 
 const GUARD_RESPAWN_MS = 5 * 60 * 1000;
 // Reputation change for killing a faction's soldier.
@@ -25,6 +27,7 @@ export class Surfaces {
   constructor(world) {
     this.w = world;
     this.instances = new Map();   // planetId -> { planet, creatures: Map }
+    this.natives = new Natives(this);
     world.data.surfaces ||= {};
   }
 
@@ -38,6 +41,8 @@ export class Surfaces {
       const planet = findPlanet(pid, this.w.seed);
       if (!planet) return null;
       inst = { planet, creatures: new Map(), lastSpawn: 0, guardsAt: {}, structures: structuresOf(planet) };
+      this.natives.setup(inst);
+      this.w.politics.state(pid);
       this.instances.set(pid, inst);
     }
     return inst;
@@ -77,6 +82,7 @@ export class Surfaces {
       `terrain:${terrainOf(planet)}`, ...faunaOf(planet).map((c) => `creature:${c}`),
       ...inst.structures.map((st) => `structure:${st.type}`), ...(planet.holy ? ['place:capital'] : []),
       ...inst.structures.filter((st) => st.race).map((st) => `race:${st.race}`),
+      ...townsOf(planet).map((t) => `people:${t.people}`),
     ]);
   }
 
@@ -193,12 +199,25 @@ export class Surfaces {
   hurtCreature(inst, c, dmg, conn) {
     c.hp -= dmg;
     c.aggro = conn.player.key;
+    // Hurting one of a town's people brings its armed folk running.
+    if (c.behavior === 'native' && !c.raider) {
+      for (const o of inst.creatures.values()) if (o.town === c.town && !o.raider && o.armed && Math.hypot(o.x - c.x, o.z - c.z) < 70) o.aggro = conn.player.key;
+    }
     // Attacking one soldier makes the whole squad turn on you.
     if (c.faction) for (const o of inst.creatures.values()) if (o.faction === c.faction && Math.hypot(o.x - c.x, o.z - c.z) < 60) o.aggro = conn.player.key;
     this.toPlanet(inst.planet.id, { t: 'hit', id: c.id, x: c.x, y: c.y + c.size, z: c.z, dmg: Math.round(dmg) });
     if (c.hp > 0) return;
     inst.creatures.delete(c.id);
     this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
+    if (c.behavior === 'native') {
+      if (c.npc) inst.natives.delete(c.npc);
+      this.w.politics.npcKilled(conn, inst.planet.id, c);
+      if (!c.raider) return;
+      conn.player.credits += Math.round(30 * inst.planet.richness);
+      if (Math.random() < 0.3) this.w.giveItem(conn, randomItem(inst.planet.richness));
+      this.w.sendSelf(conn);
+      return;
+    }
     this.w.discover(conn, [`creature:${c.species}`]);
     if (c.faction) {
       this.w.changeRep(conn, SOLDIER_KILL_REP[c.faction]);
@@ -326,6 +345,11 @@ export class Surfaces {
       return this.w.tutorial(conn, 'warden');
     }
     if (what === 'structure') return this.useStructure(conn, inst, id);
+    if (what === 'npc') {
+      const c = inst.creatures.get(id);
+      if (!c || c.behavior !== 'native' || !near(c.x, c.z, 6)) return;
+      return this.w.talk.open(conn, inst, c);
+    }
     if (what === 'relic') {
       const site = this.w.story.relics().find((r) => r.planet === p.planet);
       if (!site || !near(site.x, site.z, 8)) return;
@@ -408,6 +432,18 @@ export class Surfaces {
       if (p.mode !== 'surface') continue;
       if (!byPlanet.has(p.planet)) byPlanet.set(p.planet, []);
       byPlanet.get(p.planet).push(c);
+      // Blizzards, sandstorms and ashfall wear you down away from shelter.
+      const inst0 = this.instances.get(p.planet);
+      if (inst0 && !p.dead) {
+        const wx = weatherInfo(weatherAt(inst0.planet, now / 1000));
+        const sheltered = inst0.towns?.some((t) => Math.hypot(t.x - p.px, t.z - p.pz) < t.radius + 6) || (p.armor?.armor || 0) >= 25 || p.buffs?.exposure;
+        if (wx.exposure && !sheltered) {
+          p.hp -= wx.exposure * dt;
+          p.lastHurt = now;
+          if (Math.random() < 0.1) c.send({ t: 'you', hp: p.hp });
+          if (p.hp <= 0) this.hurtPlayer(c, 1, wx.name.toLowerCase());
+        }
+      }
       // Health regenerates out of combat.
       const regen = p.buffs?.regen || 0;
       if (!p.dead && p.hp < p.maxHp && (now - (p.lastHurt || 0) > 6000 || regen)) {
@@ -439,6 +475,7 @@ export class Surfaces {
     if (now - inst.lastSpawn < 1500) return;
     inst.lastSpawn = now;
     const planet = inst.planet;
+    this.natives.spawn(inst, conns, now);
 
     // Ruin guardians and faction soldiers turn out when someone comes near their structure.
     for (const st of inst.structures) {
@@ -458,7 +495,7 @@ export class Surfaces {
       }
     }
 
-    const wild = [...inst.creatures.values()].filter((c) => !c.guard).length;
+    const wild = [...inst.creatures.values()].filter((c) => !c.guard && !c.raider).length;
     const cap = Math.min(18, conns.length * (planet.starter ? 3 : 5));
     if (wild >= cap || Math.random() > 0.5) return;
     const anchor = conns[Math.floor(Math.random() * conns.length)].player;
@@ -477,6 +514,7 @@ export class Surfaces {
 
   // Whether a creature wants to fight this pilot, and from how far away.
   aggroRange(c, p) {
+    if (c.behavior === 'native') return this.natives.aggroRange(this.instance(p.planet), c, p);
     if (c.aggro === p.key) return 60;
     switch (c.behavior) {
       case 'aggressive': case 'swarm': return 45;
@@ -501,27 +539,48 @@ export class Surfaces {
       if (!c.guard && !conns.some((oc) => Math.hypot(oc.player.px - c.x, oc.player.pz - c.z) < 220)) { inst.creatures.delete(c.id); continue; }
       if (c.guard && c.home && Math.hypot(c.x - c.home[0], c.z - c.home[1]) > c.leash) { target = null; c.aggro = null; }
       let tx, tz, speed = c.speed;
-      if (target) {
-        tx = target.player.px; tz = target.player.pz;
-        // Soldiers shoot from range; everything else has to get close.
-        const reach = c.behavior === 'soldier' ? 28 : 1.6 + c.size;
-        if (best < reach) {
-          speed = c.behavior === 'soldier' && best > 12 ? speed * 0.4 : 0;
-          if (now - c.lastAttack > (c.behavior === 'soldier' ? 900 : 1100)) {
+      const native = c.behavior === 'native';
+      const wolf = native && this.natives.wolf(inst, c);
+      if (wolf) speed *= 1.6;
+      // Armed natives with no pilot to fight take on raiders and their realm's enemies.
+      const foe = native && !target ? this.natives.findFoe(inst, c) : null;
+      if (target || foe) {
+        tx = target ? target.player.px : foe.x; tz = target ? target.player.pz : foe.z;
+        const dist = target ? best : Math.hypot(foe.x - c.x, foe.z - c.z);
+        // Soldiers and armed natives shoot from range; everything else has to get close.
+        const ranged = c.behavior === 'soldier' || (native && c.armed && !wolf && c.people !== 'vampire');
+        const reach = ranged ? (c.behavior === 'soldier' ? 28 : 24) : 1.6 + c.size;
+        if (dist < reach) {
+          speed = ranged && dist > 12 ? speed * 0.4 : 0;
+          if (now - c.lastAttack > (ranged ? 900 : 1100)) {
             c.lastAttack = now;
-            if (c.behavior === 'soldier') {
-              this.toPlanet(inst.planet.id, { t: 'shot', by: c.id, from: [c.x, c.y + 1.5, c.z], to: [[target.player.px, target.player.py + 1.2, target.player.pz]], c: c.faction === 'empire' ? '#ffe08a' : '#ff6a4a' });
-              if (Math.random() < 0.7) this.hurtPlayer(target, c.dmg, CREATURES[c.species].name);
-            } else this.hurtPlayer(target, c.dmg, CREATURES[c.species].name);
+            const name = native ? c.name : CREATURES[c.species].name;
+            const dmg = c.dmg * (wolf ? 1.6 : 1);
+            if (ranged) {
+              const to = target ? [target.player.px, target.player.py + 1.2, target.player.pz] : [foe.x, foe.y + 1.2, foe.z];
+              this.toPlanet(inst.planet.id, { t: 'shot', by: c.id, from: [c.x, c.y + 1.5, c.z], to: [to], c: c.faction === 'empire' ? '#ffe08a' : native ? '#ffd08a' : '#ff6a4a' });
+              if (Math.random() < 0.7) target ? this.hurtPlayer(target, dmg, name) : this.natives.hurtByNative(inst, foe, dmg, c);
+            } else if (target) {
+              this.hurtPlayer(target, dmg, name);
+              // A vampire's bite feeds it.
+              if (c.people === 'vampire') c.hp = Math.min(c.maxHp, c.hp + dmg * 0.5);
+              if (native) this.w.powers?.bitten(target, c);
+            } else this.natives.hurtByNative(inst, foe, dmg, c);
           }
         }
       } else if (c.guard && c.home && Math.hypot(c.x - c.home[0], c.z - c.home[1]) > 8) {
         [tx, tz] = c.home;
       } else {
         const base = c.home || [c.x, c.z];
-        if (!c.wander || Math.hypot(c.wander[0] - c.x, c.wander[1] - c.z) < 3) c.wander = [base[0] + (Math.random() - 0.5) * (c.guard ? 30 : 50), base[1] + (Math.random() - 0.5) * (c.guard ? 30 : 50)];
+        if (!c.wander || Math.hypot(c.wander[0] - c.x, c.wander[1] - c.z) < 3) {
+          // Townsfolk potter about near their work; guards patrol wider.
+          const r = c.behavior === 'native' ? (c.role === 'guard' ? 40 : c.role === 'merchant' || c.role === 'smith' || c.role === 'ruler' ? 6 : 18) : c.guard ? 30 : 50;
+          c.wander = [base[0] + (Math.random() - 0.5) * r, base[1] + (Math.random() - 0.5) * r];
+          if (c.behavior === 'native' && Math.random() < 0.5) c.idleUntil = now + 2000 + Math.random() * 6000;
+        }
+        if (c.idleUntil > now) speed = 0;
         [tx, tz] = c.wander;
-        speed *= 0.35;
+        speed *= c.behavior === 'native' ? 0.4 : 0.35;
       }
       const dx = tx - c.x, dz = tz - c.z, d = Math.hypot(dx, dz);
       if (d > 0.1 && speed > 0) {
@@ -549,7 +608,16 @@ export class Surfaces {
       const w = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
       players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0 });
     }
-    const creatures = inst ? [...inst.creatures.values()].map((c) => ({ id: c.id, sp: c.species, x: c.x, y: c.y, z: c.z, yaw: c.yaw, hp: c.hp, maxHp: c.maxHp, size: c.size, hostile: this.aggroRange(c, me) > 0 })) : [];
+    conn.seenNatives ||= new Set();
+    const creatures = inst ? [...inst.creatures.values()].map((c) => {
+      const o = { id: c.id, sp: c.species, x: c.x, y: c.y, z: c.z, yaw: c.yaw, hp: c.hp, maxHp: c.maxHp, size: c.size, hostile: this.aggroRange(c, me) > 0 };
+      if (c.behavior === 'native') {
+        if (!conn.seenNatives.has(c.id)) { conn.seenNatives.add(c.id); o.n = this.natives.describe(c); }
+        if (this.natives.wolf(inst, c)) o.wolf = 1;
+      }
+      return o;
+    }) : [];
+    if (conn.seenNatives.size > 3000) conn.seenNatives.clear();
     return { players, creatures, parked };
   }
 }

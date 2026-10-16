@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { addInkHull } from './toon.js';
 import { SHIP_PARTS, SHIP_BLOCK } from '/shared/rules.js';
 import { mulberry32 } from '/shared/rng.js';
+import { PEOPLES } from '/shared/content/peoples.js';
 
 const box = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
 
@@ -214,88 +215,186 @@ function pick(list, key, salt = 0) {
   return list[(h >>> 0) % list.length];
 }
 
-// A grounded anime pilot, drawn like a seinen character sheet: real proportions, a stern narrow
-// gaze, hair slicked back with braids at the temples, a rough tunic in the pilot's color with a
-// rope belt, dark trousers and tall boots. Armor shows as leather and plate.
-function buildAnimePerson(color, armor) {
+// A grounded anime figure, drawn like a seinen character sheet: real proportions, a steady
+// narrow gaze, hair slicked back with braids at the temples, a rough tunic with a rope belt,
+// dark trousers and tall boots. The same body dresses every people and role:
+//   opts: tunic, skin, hair, eyes, armor, female, ears (elf), beard, height, width (dwarf),
+//         robe, cloak, role gear (crown, helmet, spear, staff, hammer, bow, hat, apron, lute).
+export function buildHuman(opts) {
+  const o = { armor: 0, female: false, ears: false, beard: false, height: 1, width: 1, gun: true, ...opts };
   const g = new THREE.Group();
-  const M = (c, o = {}) => { const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, ...o }); m.userData.paint = 0; return m; };
+  const body = new THREE.Group();
+  body.scale.set(o.width, o.height, o.width);
+  g.add(body);
+  const M = (c, x = {}) => { const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, ...x }); m.userData.paint = 0; return m; };
   const B = (c) => new THREE.MeshBasicMaterial({ color: c });
-  const tunicColor = new THREE.Color(color);
-  const hsl = {}; tunicColor.getHSL(hsl);
-  tunicColor.setHSL(hsl.h, Math.min(hsl.s, 0.45), 0.4);
-  const hairC = pick(HAIR, color), irisC = pick(IRIS, color, 7);
-  const tunic = M(tunicColor), trim = M(tunicColor.clone().multiplyScalar(0.62)), pants = M('#3a3236'), boot = M('#4a4944');
-  const rope = M('#cbbd98'), skin = M('#f1d1ba'), hair = M(hairC), hairDark = M(new THREE.Color(hairC).multiplyScalar(0.72));
+  const tunicColor = new THREE.Color(o.tunic);
+  const tunic = M(tunicColor), trim = M(tunicColor.clone().multiplyScalar(0.62)), pants = M(o.pants || '#3a3236'), boot = M(o.boots || '#4a4944');
+  const rope = M('#cbbd98'), skin = M(o.skin), hair = M(o.hair), hairDark = M(new THREE.Color(o.hair).multiplyScalar(0.72));
+  const armor = o.armor;
   const plate = M(armor > 60 ? '#b8a060' : armor > 20 ? '#9aa0a6' : '#6a5440', { roughness: armor > 20 ? 0.45 : 0.9, metalness: armor > 20 ? 0.35 : 0 });
-  const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = g) => {
+  const metal = M('#9aa0a8', { roughness: 0.4, metalness: 0.5 }), gold = M('#e0b848', { roughness: 0.35, metalness: 0.6 }), woodM = M('#6a4a2a');
+  const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = body) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z); m.rotation.set(rx, ry, rz);
     parent.add(m);
     return m;
   };
-  // Legs: loose trousers tucked into tall boots.
+  const W = o.female ? 0.9 : 1;
+  // Legs: loose trousers tucked into tall boots (hidden under a robe).
   for (const sx of [-1, 1]) {
     add(new THREE.CylinderGeometry(0.085, 0.075, 0.6, 10), pants, sx * 0.1, 0.66, 0);
     add(new THREE.CylinderGeometry(0.068, 0.072, 0.36, 10), boot, sx * 0.1, 0.2, 0);
     add(new THREE.BoxGeometry(0.11, 0.06, 0.2), boot, sx * 0.1, 0.03, -0.04);
   }
-  // Tunic: shoulders to mid-thigh, with a notched collar and a rope belt.
-  add(new THREE.CylinderGeometry(0.17, 0.2, 0.66, 14).scale(1.1, 1, 0.72), tunic, 0, 1.09, 0);
-  add(new THREE.SphereGeometry(0.19, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.18, 0.45, 0.75), tunic, 0, 1.41, 0);
+  // Tunic (or a long robe) from the shoulders down, with a notched collar and a rope belt.
+  const robe = o.robe;
+  add(new THREE.CylinderGeometry(0.17 * W, robe ? 0.3 : 0.2, robe ? 1.3 : 0.66, 14).scale(1.1, 1, 0.72), tunic, 0, robe ? 0.77 : 1.09, 0);
+  add(new THREE.SphereGeometry(0.19, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.18 * W, 0.45, 0.75), tunic, 0, 1.41, 0);
   add(new THREE.TorusGeometry(0.06, 0.012, 4, 14).scale(1, 1.3, 1).rotateX(Math.PI / 2), trim, 0, 1.47, -0.02);
   add(new THREE.BoxGeometry(0.018, 0.12, 0.01), trim, 0, 1.39, -0.135);
   add(new THREE.TorusGeometry(0.2, 0.018, 5, 18).scale(1.08, 0.72, 1).rotateX(Math.PI / 2), rope, 0, 0.92, 0);
-  add(new THREE.CylinderGeometry(0.205, 0.215, 0.03, 14).scale(1.1, 1, 0.74), trim, 0, 0.77, 0);
-  // Arms: short sleeves, bare forearms with rope-wrapped wrists. The right arm holds the gun.
+  if (!robe) add(new THREE.CylinderGeometry(0.205, 0.215, 0.03, 14).scale(1.1, 1, 0.74), trim, 0, 0.77, 0);
+  if (o.apron) add(new THREE.BoxGeometry(0.3, 0.6, 0.02), M(o.apron), 0, 0.85, -0.16);
+  if (o.cloak) add(new THREE.CylinderGeometry(0.22, 0.34, 1.2, 14, 1, true, Math.PI * 0.62, Math.PI * 1.76).scale(1.1, 1, 0.8), M(o.cloak, { side: THREE.DoubleSide }), 0, 0.85, 0.02);
+  if (o.fur) add(new THREE.TorusGeometry(0.2, 0.07, 6, 14).scale(1.15, 1, 0.85).rotateX(Math.PI / 2), M(o.fur), 0, 1.42, 0);
+  // Arms: short sleeves, bare forearms with rope-wrapped wrists. The right arm holds a weapon.
+  const arms = [];
   for (const sx of [-1, 1]) {
     const arm = new THREE.Group();
-    arm.position.set(sx * 0.235, 1.4, 0);
-    g.add(arm);
-    if (sx > 0) arm.rotation.x = 1.1; else arm.rotation.z = -0.08;
-    add(new THREE.CylinderGeometry(0.058, 0.055, 0.16, 10), tunic, 0, -0.08, 0, 0, 0, 0, arm);
+    arm.position.set(sx * 0.235 * W, 1.4, 0);
+    body.add(arm);
+    if (sx > 0 && o.gun) arm.rotation.x = 1.1; else arm.rotation.z = -sx * 0.08;
+    add(new THREE.CylinderGeometry(0.058, 0.055, robe ? 0.36 : 0.16, 10), tunic, 0, robe ? -0.18 : -0.08, 0, 0, 0, 0, arm);
     add(new THREE.CylinderGeometry(0.045, 0.04, 0.3, 10), skin, 0, -0.27, 0, 0, 0, 0, arm);
     add(new THREE.CylinderGeometry(0.048, 0.048, 0.08, 10), rope, 0, -0.38, 0, 0, 0, 0, arm);
     add(new THREE.SphereGeometry(0.045, 10, 8).scale(0.85, 1.1, 0.7), skin, 0, -0.46, 0, 0, 0, 0, arm);
-    if (armor > 0) add(new THREE.SphereGeometry(0.085, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.1, 0.7, 1), plate, 0, 0.0, 0, 0, 0, sx * -0.3, arm);
-    if (sx > 0) g.userData.gunArm = arm;
+    if (armor > 0) add(new THREE.SphereGeometry(0.085, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1.1, 0.7, 1), plate, 0, 0, 0, 0, 0, sx * -0.3, arm);
+    arms.push(arm);
   }
-  if (armor > 20) add(new THREE.CylinderGeometry(0.18, 0.19, 0.3, 14).scale(1.12, 1, 0.76), plate, 0, 1.26, 0);
+  g.userData.arms = arms;
+  if (armor > 20) add(new THREE.CylinderGeometry(0.18 * W, 0.19, 0.3, 14).scale(1.12, 1, 0.76), plate, 0, 1.26, 0);
   // Neck and head.
   add(new THREE.CylinderGeometry(0.048, 0.055, 0.1, 10), skin, 0, 1.52, 0);
   const hy = 1.66;
-  add(new THREE.SphereGeometry(0.12, 18, 14).scale(0.88, 1.08, 0.98), skin, 0, hy, 0);
+  add(new THREE.SphereGeometry(0.12, 18, 14).scale(0.88 * (o.female ? 0.96 : 1), 1.08, 0.98), skin, 0, hy, 0);
   add(new THREE.ConeGeometry(0.075, 0.1, 10).scale(1.1, 1, 0.9).rotateX(Math.PI), skin, 0, hy - 0.085, -0.025);
   add(new THREE.ConeGeometry(0.014, 0.04, 4).rotateX(-Math.PI / 2 - 0.35), skin, 0, hy - 0.012, -0.118);
-  for (const sx of [-1, 1]) add(new THREE.SphereGeometry(0.022, 8, 6).scale(0.5, 1, 0.8), skin, sx * 0.105, hy - 0.005, 0.005);
+  for (const sx of [-1, 1]) {
+    if (o.ears) add(new THREE.ConeGeometry(0.022, 0.11, 6).rotateZ(-sx * 1.1).rotateY(sx * 0.3), skin, sx * 0.13, hy + 0.03, 0.01);
+    else add(new THREE.SphereGeometry(0.022, 8, 6).scale(0.5, 1, 0.8), skin, sx * 0.105, hy - 0.005, 0.005);
+  }
   // Face: narrow eyes under a heavy upper lid, level brows, a straight mouth.
   const face = [];
   for (const sx of [-1, 1]) {
     const eye = new THREE.Group();
     eye.position.set(sx * 0.042, hy + 0.012, -0.104);
     eye.rotation.set(0, -sx * 0.3, sx * -0.08);
-    g.add(eye);
-    face.push(add(new THREE.SphereGeometry(1, 12, 8).scale(0.024, 0.0095, 0.006), B('#e6e2dc'), 0, 0, 0, 0, 0, 0, eye));
-    face.push(add(new THREE.CircleGeometry(0.0085, 14).rotateY(Math.PI), B(new THREE.Color(irisC).multiplyScalar(0.8)), sx * 0.002, -0.001, -0.0062, 0, 0, 0, eye));
+    body.add(eye);
+    face.push(add(new THREE.SphereGeometry(1, 12, 8).scale(0.024, o.female ? 0.011 : 0.0095, 0.006), B('#e6e2dc'), 0, 0, 0, 0, 0, 0, eye));
+    face.push(add(new THREE.CircleGeometry(0.0085, 14).rotateY(Math.PI), B(new THREE.Color(o.eyes).multiplyScalar(0.8)), sx * 0.002, -0.001, -0.0062, 0, 0, 0, eye));
     face.push(add(new THREE.CircleGeometry(0.0038, 10).rotateY(Math.PI), B('#141218'), sx * 0.002, -0.001, -0.0066, 0, 0, 0, eye));
-    face.push(add(new THREE.BoxGeometry(0.052, 0.0055, 0.006), B('#2a1e1a'), 0, 0.0085, -0.004, 0, 0, sx * 0.06, eye));
+    face.push(add(new THREE.BoxGeometry(0.052, o.female ? 0.007 : 0.0055, 0.006), B('#2a1e1a'), 0, 0.0085, -0.004, 0, 0, sx * 0.06, eye));
     face.push(add(new THREE.BoxGeometry(0.05, 0.007, 0.008), hairDark, sx * 0.045, hy + 0.04, -0.106, 0, -sx * 0.3, sx * 0.14));
   }
-  face.push(add(new THREE.BoxGeometry(0.03, 0.0035, 0.004), B('#8a5a50'), 0, hy - 0.058, -0.103));
+  face.push(add(new THREE.BoxGeometry(0.03, 0.0035, 0.004), B(o.female ? '#b85a60' : '#8a5a50'), 0, hy - 0.058, -0.103));
   for (const f of face) f.userData.noHull = true;
-  // Hair: slicked back over the top, falling behind to the shoulders, a braid at each temple.
+  // Hair: slicked back over the top, falling behind to the shoulders (longer for women), braids.
   add(new THREE.SphereGeometry(0.128, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.52).scale(0.92, 1.08, 1.04), hair, 0, hy + 0.012, 0.008, 0.22, 0, 0);
-  add(new THREE.SphereGeometry(0.125, 16, 10, 0, Math.PI, 0, Math.PI * 0.8).scale(0.97, 1.25, 1.05), hair, 0, hy - 0.03, 0.004);
-  add(new THREE.CylinderGeometry(0.03, 0.05, 0.2, 8).scale(1, 1, 0.6), hair, 0, hy - 0.13, 0.085, 0.12, 0, 0);
+  add(new THREE.SphereGeometry(0.125, 16, 10, 0, Math.PI, 0, Math.PI * 0.8).scale(0.97, o.female ? 1.7 : 1.25, 1.05), hair, 0, hy - (o.female ? 0.08 : 0.03), 0.004);
+  add(new THREE.CylinderGeometry(0.03, 0.05, o.female ? 0.34 : 0.2, 8).scale(1, 1, 0.6), hair, 0, hy - (o.female ? 0.2 : 0.13), 0.085, 0.12, 0, 0);
   for (const sx of [-1, 1]) {
     for (let i = 0; i < 6; i++) {
       add(new THREE.SphereGeometry(0.017 - i * 0.0008, 8, 6).scale(1, 1.3, 1), i % 2 ? hairDark : hair, sx * (0.1 + i * 0.002), hy + 0.05 - i * 0.034, -0.035 + i * 0.008);
     }
     add(new THREE.CylinderGeometry(0.014, 0.014, 0.03, 8), M('#2a2622'), sx * 0.112, hy - 0.16, 0.012);
   }
-  const gun = add(new THREE.BoxGeometry(0.06, 0.09, 0.4), M('#3a3a3e', { roughness: 0.5, metalness: 0.3 }), 0, -0.62, 0, 0, 0, 0, g.userData.gunArm);
-  gun.geometry.rotateX(Math.PI / 2);
-  g.userData.gun = gun;
+  if (o.beard) {
+    add(new THREE.ConeGeometry(0.085, o.beard === 'long' ? 0.3 : 0.16, 10).scale(1, 1, 0.7).rotateX(Math.PI), hair, 0, hy - (o.beard === 'long' ? 0.2 : 0.13), -0.06);
+    add(new THREE.TorusGeometry(0.03, 0.01, 4, 10, Math.PI).rotateZ(Math.PI), hair, 0, hy - 0.045, -0.105);
+  }
+  // Role gear.
+  const right = arms[1];
+  if (o.crown) {
+    add(new THREE.CylinderGeometry(0.115, 0.11, 0.04, 14, 1, true), gold, 0, hy + 0.1, 0.005);
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; add(new THREE.ConeGeometry(0.015, 0.05, 4), gold, Math.cos(a) * 0.11, hy + 0.14, Math.sin(a) * 0.11); }
+  }
+  if (o.helmet) {
+    add(new THREE.SphereGeometry(0.135, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.55).scale(0.95, 1.05, 1.05), metal, 0, hy + 0.02, 0.005);
+    add(new THREE.BoxGeometry(0.02, 0.09, 0.02), metal, 0, hy - 0.02, -0.13);
+    if (o.plume) add(new THREE.CylinderGeometry(0.02, 0.04, 0.22, 6).rotateX(0.6), M(o.plume), 0, hy + 0.18, 0.06);
+  }
+  if (o.hat === 'straw') add(new THREE.CylinderGeometry(0.06, 0.22, 0.08, 14), M('#d8c070'), 0, hy + 0.14, 0);
+  if (o.hat === 'wizard') add(new THREE.ConeGeometry(0.14, 0.42, 12).rotateZ(0.12), M(o.tunic), 0, hy + 0.3, 0.02);
+  if (o.spear) { add(new THREE.CylinderGeometry(0.014, 0.014, 2, 6), woodM, 0, -0.3, 0, 0, 0, 0, right); add(new THREE.ConeGeometry(0.03, 0.14, 6).rotateX(Math.PI), metal, 0, -1.36, 0, 0, 0, 0, right); }
+  if (o.shield) add(new THREE.CylinderGeometry(0.2, 0.2, 0.03, 16).rotateZ(Math.PI / 2), M(o.shield), -0.06, -0.25, 0, 0, 0, 0, arms[0]);
+  if (o.staff) { add(new THREE.CylinderGeometry(0.016, 0.02, 1.7, 6), woodM, 0, -0.3, 0, 0, 0, 0, right); add(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: o.staff }), 0, 0.56, 0, 0, 0, 0, right); }
+  if (o.hammer) { add(new THREE.CylinderGeometry(0.014, 0.014, 0.4, 6), woodM, 0, -0.55, 0, 0, 0, 0, right); add(new THREE.BoxGeometry(0.1, 0.07, 0.07), metal, 0, -0.75, 0, 0, 0, 0, right); }
+  if (o.bow) add(new THREE.TorusGeometry(0.4, 0.012, 4, 16, Math.PI).rotateZ(Math.PI / 2), woodM, 0, 1.15, 0.2, 0, 0, 0.3);
+  if (o.lute) add(new THREE.SphereGeometry(0.1, 10, 8).scale(1, 1.3, 0.5), woodM, 0.12, 1.05, -0.16);
+  if (o.gun) {
+    const gun = add(new THREE.BoxGeometry(0.06, 0.09, 0.4), M('#3a3a3e', { roughness: 0.5, metalness: 0.3 }), 0, -0.62, 0, 0, 0, 0, right);
+    gun.geometry.rotateX(Math.PI / 2);
+    g.userData.gun = gun;
+  }
+  return addInkHull(g);
+}
+
+// The pilot: earthy tunic in the pilot's color and natural hair, chosen from their color.
+function buildAnimePerson(color, armor) {
+  const tunic = new THREE.Color(color);
+  const hsl = {}; tunic.getHSL(hsl);
+  tunic.setHSL(hsl.h, Math.min(hsl.s, 0.45), 0.4);
+  return buildHuman({ tunic, skin: '#f1d1ba', hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), armor });
+}
+
+// A native of a planet town, dressed for their people and role.
+export function buildNative(n) {
+  const P = PEOPLES[n.people] || PEOPLES.human;
+  let seed = n.look >>> 0;
+  const r = () => { seed = (Math.imul(seed ^ (seed >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return seed / 4294967296; };
+  const any = (list) => list[Math.floor(r() * list.length)];
+  const role = n.role;
+  const o = {
+    tunic: any(P.clothes), skin: any(P.skin), hair: any(P.hair), eyes: any(P.eyes), female: !!n.female,
+    ears: !!P.ears, height: P.height * (0.95 + r() * 0.1), width: n.people === 'dwarf' ? 1.28 : 1,
+    beard: !n.female && r() < P.beard ? (n.people === 'dwarf' ? 'long' : 'short') : false, gun: false,
+  };
+  if (n.people === 'vampire') o.cloak = '#1a0e14';
+  if (n.people === 'werewolf') o.fur = '#8a7a60';
+  if (role === 'ruler') { o.crown = true; o.cloak = n.people === 'vampire' ? '#3a0a14' : '#7a1a2a'; o.robe = n.people !== 'dwarf'; }
+  if (role === 'guard' || role === 'captain') { o.helmet = true; o.spear = true; o.shield = n.raider ? '#5a2a2a' : any(P.clothes); o.armor = 30; o.plume = role === 'captain' ? '#c83a3a' : null; }
+  if (n.raider && n.people === 'human' && !n.realm) o.tunic = '#4a3a2a';
+  if (role === 'mage') { o.robe = true; o.hat = 'wizard'; o.staff = n.people === 'elf' ? '#9affea' : '#c8a0ff'; }
+  if (role === 'priest' || role === 'healer') { o.robe = true; o.tunic = role === 'healer' ? '#e8e4d8' : o.tunic; }
+  if (role === 'smith') { o.apron = '#4a3426'; o.hammer = true; }
+  if (role === 'merchant') o.apron = '#c8b078';
+  if (role === 'farmer') o.hat = 'straw';
+  if (role === 'hunter') o.bow = true;
+  if (role === 'bard') o.lute = true;
+  return buildHuman(o);
+}
+
+// A werewolf in its night form: a hunched, shaggy wolf-man.
+export function buildWerewolf(fur = '#6a5a4a') {
+  const g = new THREE.Group();
+  const M = (c) => { const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.95 }); m.userData.paint = 0; return m; };
+  const furM = M(fur), dark = M(new THREE.Color(fur).multiplyScalar(0.6)), claw = M('#e8e0d0');
+  const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); g.add(m); return m; };
+  add(new THREE.SphereGeometry(0.42, 14, 10).scale(1, 1.3, 0.85), furM, 0, 1.45, 0.05, 0.35);
+  add(new THREE.SphereGeometry(0.3, 12, 8).scale(1.1, 0.9, 1), furM, 0, 1.0, 0.1);
+  add(new THREE.SphereGeometry(0.2, 12, 10), furM, 0, 2.0, -0.25);
+  add(new THREE.BoxGeometry(0.14, 0.12, 0.26), dark, 0, 1.95, -0.48);
+  for (const sx of [-1, 1]) {
+    add(new THREE.ConeGeometry(0.06, 0.18, 4), furM, sx * 0.1, 2.2, -0.2);
+    add(new THREE.SphereGeometry(0.025, 6, 4), new THREE.MeshBasicMaterial({ color: '#ffc83a' }), sx * 0.07, 2.04, -0.42);
+    add(new THREE.CylinderGeometry(0.09, 0.07, 0.9, 8), furM, sx * 0.45, 1.35, -0.1, 0.4, 0, sx * 0.2);
+    for (let i = -1; i <= 1; i++) add(new THREE.ConeGeometry(0.02, 0.12, 4).rotateX(Math.PI), claw, sx * 0.5 + i * 0.03, 0.85, -0.32);
+    add(new THREE.CylinderGeometry(0.12, 0.08, 0.55, 8), furM, sx * 0.2, 0.62, 0.05, -0.4);
+    add(new THREE.CylinderGeometry(0.07, 0.05, 0.5, 8), dark, sx * 0.2, 0.22, 0.12, 0.4);
+  }
+  add(new THREE.ConeGeometry(0.08, 0.6, 6).rotateX(-1.1), furM, 0, 0.95, 0.45);
+  g.scale.setScalar(1.15);
   return addInkHull(g);
 }
 

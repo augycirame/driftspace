@@ -270,6 +270,11 @@ function onMessage(m) {
     case 'shop': ui.shop(m); break;
     case 'loot': ui.toast(`Loot: ${m.name}`, 'loot'); break;
     case 'dialogue': ui.dialogue(m.who); break;
+    case 'talk': ui.talk(m); break;
+    case 'talk_line': ui.talkLine(m); break;
+    case 'talk_end': if (ui.current?.kind === 'talk') ui.close(); break;
+    case 'market': ui.market(m); break;
+    case 'politics': ui.politics(m.view); break;
     case 'story': {
       const hadGate = S.effects?.gateBuilt;
       S.story = m.story;
@@ -357,6 +362,7 @@ addEventListener('keydown', (e) => {
   if (k === 'k') { ui.current?.kind === 'codex' ? ui.close() : ui.codex(); return; }
   if (k === 'o') { ui.current?.kind === 'options' ? ui.close() : ui.options(); return; }
   if (k === 'm') { map.toggle(); return; }
+  if (k === 'r' && S.you.mode === 'surface') { ui.current?.kind === 'politics' ? ui.close() : send({ t: 'politics' }); return; }
   if (overlayOpen()) return;
   keys.add(k);
   if (k === ' ' || k.startsWith('arrow')) e.preventDefault();

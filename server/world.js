@@ -25,6 +25,9 @@ import { Combat } from './combat.js';
 import { Surfaces } from './surface.js';
 import { StoryDirector } from './story.js';
 import { Dungeons } from './dungeon.js';
+import { Politics } from './politics.js';
+import { Talk } from './talk.js';
+import { townsOf } from '../shared/towns.js';
 
 const TICK_MS = 100;
 const SAVE_MS = 15000;
@@ -44,7 +47,9 @@ export class World {
     this.parties = new Parties(this);
     this.story = new StoryDirector(this);
     this.combat = new Combat(this);
+    this.politics = new Politics(this);
     this.surfaces = new Surfaces(this);
+    this.talk = new Talk(this);
     this.dungeons = new Dungeons(this);
   }
 
@@ -166,6 +171,7 @@ export class World {
       inv: { items: [pistol], equipped: { weapon: pistol.id } },
       mode: 'surface', planet: STARTER_PLANET_ID, parked: null, tutorial: 0, tutCount: 0, home: '0,0:st', joined: Date.now(),
       rep: { empire: 0, rebellion: 0 }, favor: {}, blessing: null, looted: {}, codex: {},
+      standing: {}, coins: {}, goods: {},
     };
   }
 
@@ -185,6 +191,7 @@ export class World {
       tutorial: rec.tutorial || 0, tutCount: rec.tutCount || 0, home: rec.home || '0,0:st', kills: rec.kills || 0,
       rep: { empire: 0, rebellion: 0, ...rec.rep }, favor: { ...rec.favor }, blessing: rec.blessing || null,
       looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
+      standing: { ...rec.standing }, coins: { ...rec.coins }, goods: { ...rec.goods },
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
     };
@@ -214,6 +221,7 @@ export class World {
       credits: p.credits, cargo: p.cargo, ship: p.ship, upg: p.upg, inv: p.inv, tutorial: p.tutorial, tutCount: p.tutCount,
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
       rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
+      standing: p.standing, coins: p.coins, goods: p.goods,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
     this.dirty = true;
@@ -279,6 +287,7 @@ export class World {
       mode: p.mode, planet: p.planet, parked: p.parked, x: p.x, y: p.y, z: p.z, q: p.q, px: p.px, py: p.py, pz: p.pz,
       tutorial: p.tutorial, tutCount: p.tutCount, home: p.home, kills: p.kills,
       rep: p.rep, favor: p.favor, blessing: p.blessing, buffs: p.buffs, codex: Object.keys(p.codex), war: this.data.war || { empire: 0, rebellion: 0 },
+      standing: p.standing, coins: p.coins, goods: p.goods,
     };
   }
 
@@ -326,6 +335,15 @@ export class World {
   on_interact(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.interact(conn, m) : this.surfaces.interact(conn, m); }
   on_land(conn, { planet }) { if (typeof planet === 'string') this.surfaces.land(conn, planet); }
   on_fire(conn) { this.combat.fire(conn); }
+  on_talk_opt(conn, m) { if (typeof m.id === 'string') this.talk.choose(conn, m); }
+  on_market_buy(conn, m) { if (typeof m.good === 'string') this.talk.buy(conn, m); }
+  on_market_sell(conn, m) { if (typeof m.good === 'string') this.talk.sell(conn, m); }
+  on_exchange(conn, m) { if (m.dir === 'buy' || m.dir === 'sell') this.talk.exchange(conn, m); }
+  on_politics(conn) {
+    const p = conn.player;
+    if (p.mode !== 'surface') return conn.send({ t: 'toast', msg: 'Land on a world to see its realms.' });
+    conn.send({ t: 'politics', view: this.politics.view(p.planet, p) });
+  }
 
   on_sub(conn, { keys }) {
     if (!Array.isArray(keys) || conn.player.mode !== 'space') return;
@@ -543,7 +561,7 @@ export class World {
     if (!conn.shop) return false;
     if (conn.shop.id === 'haven-landing') return p.mode === 'surface' && p.planet === STARTER_PLANET_ID;
     const sf = conn.shop.surface;
-    if (sf) return p.mode === 'surface' && p.planet === sf.planet && Math.hypot(p.px - sf.x, p.pz - sf.z) < 40;
+    if (sf) return p.mode === 'surface' && p.planet === sf.planet && Math.hypot(p.px - sf.x, p.pz - sf.z) < (sf.radius || 40);
     return this.dockedStation(p)?.id === conn.shop.id;
   }
 
@@ -780,12 +798,36 @@ export class World {
         conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
         return reply(`Moved to the ${STRUCTURES[st.type].name}.`);
       }
+      case 'town': {
+        if (p.mode !== 'surface') return reply('Usage (on a planet): /town [index]');
+        const towns = townsOf(this.surfaces.instance(p.planet).planet);
+        const t = towns[Number(args[0]) || 0];
+        if (!t) return reply(`Towns here: ${towns.map((x, i) => `${i}: ${x.name}`).join(', ') || 'none'}`);
+        p.px = t.x; p.pz = t.z + t.radius * 0.2; p.py = this.surfaces.ground(p.planet, p.px, p.pz);
+        conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
+        return reply(`Moved to ${t.name}.`);
+      }
+      case 'war': case 'event': {
+        if (p.mode !== 'surface') return reply('On a planet: /war  or  /event famine|plague|festival|raiders');
+        const s = this.politics.state(p.planet), ids = Object.keys(s.realms);
+        if (cmd === 'war') {
+          if (ids.length < 2) return reply('Only one realm here.');
+          const [a, b] = ids;
+          s.realms[a].war = { with: b, score: 0, since: Date.now() };
+          s.realms[b].war = { with: a, score: 0, since: Date.now() };
+          this.politics.chronicle(p.planet, `War! The ${this.politics.realmDef(p.planet, a).name} has declared war on the ${this.politics.realmDef(p.planet, b).name}.`);
+          return reply('War declared.');
+        }
+        const kind = args[0] || 'raiders';
+        this.politics.startEvent(p.planet, ids[0], kind, 15, `(${kind} begins in the ${this.politics.realmDef(p.planet, ids[0]).name})`);
+        return reply('Event started.');
+      }
       case 'heal':
         p.hull = p.stats.hp; p.shield = p.stats.shield; p.hp = p.maxHp;
         this.sendSelf(conn);
         return reply('Healed.');
       default:
-        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /heal');
+        return reply('Admin commands: /spawn, /tp, /land, /give, /credits, /story, /rep, /relic, /goto, /town, /war, /event, /heal');
     }
   }
 
@@ -839,6 +881,7 @@ export class World {
     this.surfaces.tick(dt, now);
     this.dungeons.tick(dt, now);
     this.story.tick(now);
+    this.politics.tick(now);
     this.snapshots(now);
   }
 

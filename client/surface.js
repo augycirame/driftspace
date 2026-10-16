@@ -8,7 +8,9 @@ import {
 } from '/shared/planet.js';
 import { ORES, BLOCKS, SURFACE_GRID } from '/shared/rules.js';
 import { PLAYER_SPEED, RUN_SPEED } from '/shared/items.js';
-import { buildShip, buildPerson, buildCreature, buildStructure, label, healthBar, setHealth, glowSprite } from './meshes.js';
+import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, buildWerewolf, label, healthBar, setHealth, glowSprite } from './meshes.js';
+import { townsOf, townFootprints, insideFootprint, sunAt, weatherAt, weatherInfo } from '/shared/towns.js';
+import { buildTown, realmColor } from './towns.js';
 import { CREATURES } from '/shared/content/creatures.js';
 import { STRUCTURES } from '/shared/content/structures.js';
 import { GODS } from '/shared/content/factions.js';
@@ -62,10 +64,10 @@ function detailTextures() {
 function skyDome(prof, sunDir, anime = false, soft = false) {
   const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color(soft ? '#4f9ee6' : anime ? '#1f5fe0' : '#1a3a7a'), soft ? 0.6 : anime ? 0.65 : 0.35);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), anime ? 0.45 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, soft: { value: soft ? 1 : 0 }, time: { value: 0 } },
+    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#e8f6ff'), anime ? 0.45 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, soft: { value: soft ? 1 : 0 }, time: { value: 0 }, day: { value: 1 }, gloom: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
-      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; uniform float anime; uniform float soft; uniform float time; varying vec3 vDir;
+      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; uniform float anime; uniform float soft; uniform float time; uniform float day; uniform float gloom; varying vec3 vDir;
       ${NOISE_GLSL}
       void main() {
         vec3 d = normalize(vDir);
@@ -104,6 +106,17 @@ function skyDome(prof, sunDir, anime = false, soft = false) {
         } else {
           c += vec3(1.0, 0.95, 0.85) * (pow(s, 900.0) * 4.0 + pow(s, 12.0) * 0.25);
         }
+        // Weather greys the sky; evening reddens the horizon; night brings stars and a moon.
+        float lum = dot(c, vec3(0.3, 0.55, 0.15));
+        c = mix(c, vec3(lum * 0.85 + 0.05), gloom * 0.85);
+        float sunset = smoothstep(0.35, 0.0, abs(sunDir.y)) * day;
+        vec3 sflat = normalize(vec3(sunDir.x, 0.0, sunDir.z) + 1e-4);
+        c += vec3(1.0, 0.42, 0.18) * sunset * pow(max(dot(normalize(vec3(d.x, 0.0, d.z)), sflat), 0.0), 3.0) * (1.0 - h) * 0.55;
+        vec3 night = mix(vec3(0.06, 0.09, 0.2), vec3(0.015, 0.025, 0.08), pow(h, 0.5)) + c * 0.07;
+        float star = step(0.9965, hash3(floor(d * 260.0))) * (0.6 + 0.4 * sin(time * 2.0 + hash3(floor(d * 260.0) + 3.0) * 30.0)) * smoothstep(0.02, 0.2, d.y);
+        float moon = smoothstep(0.9985, 0.9991, dot(d, -sunDir)) + pow(max(dot(d, -sunDir), 0.0), 60.0) * 0.25;
+        night += vec3(0.85, 0.9, 1.0) * (star * (1.0 - gloom) + moon * 0.9);
+        c = mix(night, c, day);
         gl_FragColor = vec4(c, 1.0);
       }`,
     side: THREE.BackSide, depthWrite: false, fog: false,
@@ -228,11 +241,17 @@ export class SurfaceView {
     const soft = this.S.gfx?.style === 'anime';
     if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime, soft); this.root.add(this.sky); } else this.sky = null;
     if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color(soft ? '#dfeaf2' : '#e8f6ff'), 0.45), 160, 700);
-    this.root.add(new THREE.HemisphereLight(prof.sky, prof.low, 1.1));
-    this.root.add(new THREE.AmbientLight('#ffffff', 0.25));
-    const sunGlow = glowSprite('#fff8e0', 260, 0.9);
-    sunGlow.position.set(800, 900, 500);
-    this.root.add(sunGlow);
+    this.hemi = new THREE.HemisphereLight(prof.sky, prof.low, 1.1);
+    this.ambient = new THREE.AmbientLight('#ffffff', 0.25);
+    this.moon = new THREE.DirectionalLight('#9ab8ff', 0);
+    this.root.add(this.hemi, this.ambient, this.moon, this.moon.target);
+    this.sunGlow = glowSprite('#fff8e0', 260, 0.9);
+    this.root.add(this.sunGlow);
+    this.fogColor = sc.fog.color.clone();
+    this.fogFar = sc.fog.far;
+    this.baseSky = sc.background.clone();
+    this.sunPower = sun.intensity;
+    this.flashT = 0;
 
     this.buildTerrain(prof);
     if (prof.water != null) {
@@ -256,6 +275,7 @@ export class SurfaceView {
     if (planet.starter) this.buildSettlement();
     this.buildRelic();
     this.buildStructures();
+    this.buildTowns();
     this.blocks = new THREE.Group();
     this.root.add(this.blocks);
     for (const [cell, blk] of Object.entries(data.blocks)) this.addBlock(cell, blk);
@@ -280,6 +300,8 @@ export class SurfaceView {
     this.root = null;
     for (const m of [this.others, this.creatures, this.parked]) m.clear();
     this.fx.clear();
+    this.precip = null; this.precipKind = null; this.towns = []; this.footprints = [];
+    this.dayLevel = this.lightLevel = this.fogLevel = null;
     this.planetId = null;
   }
 
@@ -439,6 +461,90 @@ export class SurfaceView {
     }
   }
 
+  buildTowns() {
+    this.towns = townsOf(this.planet);
+    this.footprints = townFootprints(this.planet);
+    this.townMeshes = [];
+    for (const t of this.towns) {
+      const owner = this.S.realmOwners?.[t.id] || t.realm;
+      const mesh = buildTown(this.planet, t, owner);
+      const hall = t.buildings[0];
+      const lb = label(`${t.name} · ${t.size}`, realmColor(owner), 1.1);
+      lb.position.set(hall.x, mesh.userData.base + hall.h + (t.capital ? 14 : 9), hall.z);
+      mesh.add(lb);
+      this.root.add(mesh);
+      this.townMeshes.push(mesh);
+    }
+  }
+
+  // Rain, snow, blowing sand or falling ash around the camera, by the weather.
+  setPrecip(kind) {
+    if (this.precipKind === kind) return;
+    if (this.precip) { this.root.remove(this.precip); this.precip.geometry.dispose(); this.precip.material.dispose(); }
+    this.precip = null;
+    this.precipKind = kind;
+    if (!kind || !this.root) return;
+    const n = kind === 'rain' ? 2600 : 1600, box = 60;
+    const pos = new Float32Array(n * 3), base = new Float32Array(n * 3);
+    for (let i = 0; i < n * 3; i++) base[i] = Math.random() * box;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const color = { rain: '#c8d8f0', snow: '#ffffff', sand: '#d8b878', ash: '#5a5450' }[kind];
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color, size: kind === 'rain' ? 0.09 : kind === 'snow' ? 0.22 : 0.16, transparent: true, opacity: kind === 'rain' ? 0.6 : 0.85, depthWrite: false }));
+    pts.frustumCulled = false;
+    const vel = { rain: [1.5, -30, 0.8], snow: [0.8, -2.2, 0.4], sand: [14, -0.5, 5], ash: [0.6, -1.2, 0.3] }[kind];
+    pts.userData.update = (t, cam) => {
+      for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) {
+        const j = i * 3 + k, c0 = k === 0 ? cam.x : k === 1 ? cam.y : cam.z;
+        const v = base[j] + vel[k] * t + (kind === 'snow' && k !== 1 ? Math.sin(t + i) * 0.8 : 0);
+        pos[j] = c0 + ((((v - c0) % box) + box * 1.5) % box) - box / 2;
+      }
+      geo.attributes.position.needsUpdate = true;
+    };
+    this.precip = pts;
+    this.root.add(pts);
+  }
+
+  // The sun crosses the sky; weather dims it, fogs the air and brings rain, snow or storms.
+  updateSky(dt, t) {
+    const sun = sunAt(this.planet, t), wx = weatherInfo(weatherAt(this.planet, t));
+    this.weather = wx;
+    this.sunState = sun;
+    const k = Math.min(1, dt * 0.5);
+    this.dayLevel = this.dayLevel == null || Math.abs(sun.daylight - this.dayLevel) > 0.25 ? sun.daylight : this.dayLevel + (sun.daylight - this.dayLevel) * k;
+    this.lightLevel = this.lightLevel == null ? wx.light : this.lightLevel + (wx.light - this.lightLevel) * k;
+    this.fogLevel = this.fogLevel == null ? wx.fog : this.fogLevel + (wx.fog - this.fogLevel) * k;
+    const day = this.dayLevel, light = this.lightLevel;
+    this.sunDir.set(...sun.dir);
+    if (this.sun.position.y < 0) this.sun.intensity = 0;
+    this.sun.intensity = this.sunPower * day * light * (sun.dir[1] > 0 ? 1 : 0);
+    this.moon.intensity = (1 - day) * 0.55;
+    this.moon.position.copy(this.sunDir).multiplyScalar(-300).add(this.sun.target.position);
+    this.moon.target.position.copy(this.sun.target.position);
+    this.hemi.intensity = (0.3 + 0.8 * day) * (0.6 + 0.4 * light);
+    this.ambient.intensity = 0.18 + 0.1 * day;
+    // Lightning.
+    if (wx.lightning && Math.random() < dt * 0.08) this.flashT = 0.35;
+    this.flashT = Math.max(0, this.flashT - dt);
+    if (this.flashT > 0) this.ambient.intensity += this.flashT * 6;
+    const nightFog = new THREE.Color('#0e1424');
+    const fog = this.fogColor.clone().lerp(new THREE.Color(0.55, 0.57, 0.6), 1 - light).lerp(nightFog, 1 - day);
+    this.scene.fog.color.copy(fog);
+    this.scene.fog.far = this.fogFar * this.fogLevel;
+    this.scene.fog.near = Math.min(this.scene.fog.near, this.scene.fog.far * 0.4);
+    this.scene.background = this.baseSky.clone().lerp(nightFog, 1 - day);
+    if (this.sky) {
+      const u = this.sky.material.uniforms;
+      u.sunDir.value.copy(this.sunDir);
+      u.day.value = day;
+      u.gloom.value = 1 - light;
+    }
+    this.sunGlow.position.copy(this.camera.position).addScaledVector(this.sunDir, 1100);
+    this.sunGlow.material.opacity = 0.9 * day * light * (sun.dir[1] > -0.05 ? 1 : 0);
+    this.setPrecip(wx.precip || null);
+    if (this.precip) this.precip.userData.update(t, this.camera.position);
+  }
+
   buildDeposits() {
     this.depositMeshes = new Map();
     const geo = new THREE.OctahedronGeometry(0.9, 0);
@@ -552,6 +658,8 @@ export class SurfaceView {
   hasBlock(gx, gy, gz) { return !!this.data.blocks[`${gx},${gy},${gz}`]; }
 
   // Ground under a point: terrain, liquid, or the top of a player-built block.
+  groundAt0(f) { return standHeight(this.planet, f.x, f.z, this.data.digs); }
+
   groundAt(x, z, feet) {
     let g = standHeight(this.planet, x, z, this.data.digs);
     const gx = Math.floor(x / SURFACE_GRID), gz = Math.floor(z / SURFACE_GRID);
@@ -563,6 +671,11 @@ export class SurfaceView {
   }
 
   blockedAt(x, z, feet) {
+    for (const t of this.towns || []) {
+      if (Math.abs(t.x - x) > t.radius + 8 || Math.abs(t.z - z) > t.radius + 8) continue;
+      for (const f of this.footprints) if (insideFootprint(f, x, z, 0.35) && feet < this.groundAt0(f) + 6) return true;
+      break;
+    }
     const gx = Math.floor(x / SURFACE_GRID), gz = Math.floor(z / SURFACE_GRID);
     for (let gy = Math.floor((feet + 0.7) / SURFACE_GRID); gy <= Math.floor((feet + 1.7) / SURFACE_GRID); gy++) if (this.hasBlock(gx, gy, gz)) return true;
     return false;
@@ -602,6 +715,7 @@ export class SurfaceView {
     this.sun.target.position.set(me.x, me.y, me.z);
     this.sun.position.set(me.x, me.y, me.z).addScaledVector(this.sunDir, 300);
     if (this.sky) { this.sky.position.copy(this.camera.position); this.sky.material.uniforms.time.value = t % 3600; }
+    this.updateSky(dt, t);
     if (this.liquid?.material.normalMap) this.liquid.material.normalMap.offset.set(t * 0.01, t * 0.007);
     if ((this.shadowAt = (this.shadowAt || 0) - dt) <= 0 && this.S.gfx?.q.shadows) { this.shadowAt = 0.5; this.shadowize(); }
     this.selfMesh.position.set(me.x, me.y, me.z);
@@ -659,6 +773,35 @@ export class SurfaceView {
     for (const c of this.S.creatures.values()) {
       seen.add(c.id);
       let v = this.creatures.get(c.id);
+      if (v && c.sp === 'native' && !!c.wolf !== v.wolf) { this.root.remove(v.group); this.creatures.delete(c.id); v = null; }
+      if (!v && c.sp === 'native') {
+        if (!c.n) continue;
+        const group = c.wolf ? buildWerewolf() : buildNative(c.n);
+        const bar = healthBar(0.03);
+        bar.position.y = c.wolf ? 2.9 : 2.25;
+        group.add(bar);
+        const ppl = c.n.people;
+        const lb = label(c.n.name, c.n.raider ? '#ff8a6a' : ppl === 'elf' ? '#a8f0d8' : ppl === 'dwarf' ? '#f0c890' : ppl === 'vampire' ? '#ff9aa8' : ppl === 'werewolf' ? '#e8d8a0' : '#f0ead8', 0.75);
+        lb.position.y = c.wolf ? 3.2 : 2.5;
+        group.add(lb);
+        v = { group, bar, phase: Math.random() * 6, native: true, wolf: !!c.wolf, label: lb, name: c.n.name };
+        this.creatures.set(c.id, v);
+        this.root.add(group);
+      }
+      if (v?.native) {
+        v.group.position.set(c.x, c.y, c.z);
+        v.group.rotation.y = c.yaw + Math.PI;
+        setHealth(v.bar, c.hp / c.maxHp);
+        v.bar.visible = c.hp < c.maxHp;
+        const d = Math.hypot(c.x - this.S.me.x, c.z - this.S.me.z);
+        v.label.visible = d < 22 || c.hostile;
+        const moving = Math.hypot(c.x - (v.px ?? c.x), c.z - (v.pz ?? c.z)) > 0.01;
+        v.px = c.x; v.pz = c.z;
+        const arms = v.group.userData.arms;
+        if (arms) arms[0].rotation.x = moving ? Math.sin(t * 7 + v.phase) * 0.4 : 0;
+        v.group.position.y += moving ? Math.abs(Math.sin(t * 7 + v.phase)) * 0.04 : 0;
+        continue;
+      }
       if (!v) {
         const def = CREATURES[c.sp] || CREATURES.rockCrawler;
         const group = buildCreature(def.color, c.size, c.id.length * 31 + c.id.charCodeAt(1), def.shape, def);
@@ -785,6 +928,13 @@ export class SurfaceView {
     if (this.planet.starter && near(SETTLEMENT.warden.x, SETTLEMENT.warden.z, 7)) return { what: 'warden', text: `E: talk to ${SETTLEMENT.warden.name}` };
     if (this.planet.starter && near(SETTLEMENT.vendor.x, SETTLEMENT.vendor.z, 7)) return { what: 'vendor', text: `E: trade with ${SETTLEMENT.vendor.name}` };
     if (this.relic && near(this.relic.position.x, this.relic.position.z, 7)) return { what: 'relic', text: this.relic.userData.site.found ? 'The relic is awake.' : 'E: awaken the Precursor Relic' };
+    let bestN = null, bd = 4.5;
+    for (const c of this.S.creatures.values()) {
+      if (c.sp !== 'native' || c.hostile) continue;
+      const d = Math.hypot(c.x - me.x, c.z - me.z);
+      if (d < bd) { bd = d; bestN = c; }
+    }
+    if (bestN) return { what: 'npc', id: bestN.id, text: `E: talk to ${this.creatures.get(bestN.id)?.name || bestN.n?.name || 'them'}` };
     if (parked && parked.planet === this.planetId && near(parked.x, parked.z, 14)) return { what: 'ship', text: 'E: board ship and take off · Y: shipyard' };
     for (const { st, def } of this.structures || []) {
       if (!near(st.x, st.z, st.radius + 6)) continue;

@@ -7,6 +7,7 @@ import { CREATURES, CREATURE_IDS } from './content/creatures.js';
 import { STRUCTURES, STRUCTURE_IDS } from './content/structures.js';
 import { GODS, GOD_IDS } from './content/factions.js';
 import { ALIEN_RACES } from './content/aliens.js';
+import { townsOf } from './towns.js';
 
 export const SURFACE_HALF = 400;   // surface spans [-400, 400] on x and z
 export const CELL = 4;             // terrain vertex spacing
@@ -140,14 +141,17 @@ export function structuresOf(planet) {
   return remember(structCache, planet.id, list);
 }
 
-const clearRadius = (planet) => (planet.starter ? SETTLEMENT_RADIUS : 36);
+export const clearRadius = (planet) => (planet.starter ? SETTLEMENT_RADIUS : 36);
 
 // Ground is levelled under structures so buildings sit flat.
 const padCache = new Map();
 function pads(planet) {
   let list = padCache.get(planet.id);
   if (!list) {
-    list = structuresOf(planet).map((st) => ({ x: st.x, z: st.z, r: st.radius + 4, h: rawHeight(planet, st.x, st.z) }));
+    // Towns stand on level ground, never below their water line; structures level theirs last.
+    const water = profileOf(planet).water;
+    list = townsOf(planet).map((t) => ({ x: t.x, z: t.z, r: t.radius + 10, h: Math.max(rawHeight(planet, t.x, t.z), water != null ? water + 1.5 : -1e9) }));
+    for (const st of structuresOf(planet)) list.push({ x: st.x, z: st.z, r: st.radius + 4, h: rawHeight(planet, st.x, st.z) });
     remember(padCache, planet.id, list);
   }
   return list;
@@ -268,7 +272,7 @@ export function floraFor(planet, tx, tz) {
   const main = p.flora[0][0];
   const n = Math.round((FLORA_COUNT[main] || 3) * (p.density ?? 1));
   const out = [];
-  const structs = structuresOf(planet);
+  const structs = structuresOf(planet), towns = townsOf(planet);
   for (let i = 0; i < n; i++) {
     const x = tx * 40 + rng() * 40, z = tz * 40 + rng() * 40;
     const kind = pickWeighted(rng, p.flora);
@@ -276,6 +280,7 @@ export function floraFor(planet, tx, tz) {
     if (Math.hypot(x, z) < clearRadius(planet) + 6) continue;
     if (Math.max(Math.abs(x), Math.abs(z)) > SURFACE_HALF - 30) continue;
     if (structs.some((st) => Math.hypot(st.x - x, st.z - z) < st.radius + 5)) continue;
+    if (towns.some((t) => Math.hypot(t.x - x, t.z - z) < t.radius + 12)) continue;
     out.push({ x, z, s, r, kind, v });
   }
   return out;
