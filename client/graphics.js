@@ -6,6 +6,11 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { InkPass, stylize } from './toon.js';
+
+export const STYLES = { anime: 'Anime (cel-shaded)', realistic: 'Realistic' };
+// Ink line weight per kind of scene.
+const INK = { space: { thickness: 1.0, normalK: 1.0 }, surface: { thickness: 1.3, normalK: 0.9 }, dungeon: { thickness: 1.2, normalK: 0.9 } };
 
 export const QUALITY = {
   low:    { name: 'Low',    scale: 0.75, bloom: false, shadows: 0,    sky: false, flora: 0.5, planetTex: 256,  flare: false },
@@ -34,6 +39,9 @@ export class Graphics {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.level = readSetting();
+    try { this.style = STYLES[localStorage.getItem('ds_style')] ? localStorage.getItem('ds_style') : 'anime'; } catch { this.style = 'anime'; }
+    this.scenes = new Set();
+    this.frame = 0;
     this.listeners = [];
     this.apply();
   }
@@ -50,11 +58,24 @@ export class Graphics {
 
   onChange(fn) { this.listeners.push(fn); }
 
+  setStyle(style) {
+    if (!STYLES[style]) return;
+    this.style = style;
+    try { localStorage.setItem('ds_style', style); } catch {}
+    for (const sc of this.scenes) stylize(sc, style === 'anime');
+    this.apply();
+    for (const fn of this.listeners) fn(this.q);
+  }
+
+  get anime() { return this.style === 'anime'; }
+
   apply() {
     const q = this.q;
     this.renderer.setPixelRatio(Math.max(0.5, Math.min(2.5, Math.min(window.devicePixelRatio || 1, 1.5) * q.scale)));
     this.renderer.shadowMap.enabled = q.shadows > 0;
     this.renderer.shadowMap.needsUpdate = true;
+    this.renderer.toneMapping = this.anime ? THREE.NeutralToneMapping : THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = this.anime ? 1.08 : 1.05;
     this.composer?.dispose?.();
     this.composer = null;
     this.resize();
@@ -65,9 +86,13 @@ export class Graphics {
     if (this.composer) this.composer.setSize(innerWidth, innerHeight);
   }
 
-  // Render a scene, through bloom when the quality setting allows it.
+  // Render a scene: cel-shading and ink lines in the anime style, bloom when quality allows.
   render(scene, camera, kind = 'space') {
-    if (!this.q.bloom) {
+    const anime = this.anime, q = this.q;
+    this.scenes.add(scene);
+    if (anime && (++this.frame % 6 === 0 || scene !== this.lastScene)) stylize(scene, true);
+    this.lastScene = scene;
+    if (!q.bloom && !anime) {
       this.renderer.render(scene, camera);
       return;
     }
@@ -75,18 +100,27 @@ export class Graphics {
       this.composer = new EffectComposer(this.renderer);
       this.composer.setPixelRatio(this.renderer.getPixelRatio());
       this.renderPass = new RenderPass(scene, camera);
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1, 0.5, 0.6);
       this.composer.addPass(this.renderPass);
-      this.composer.addPass(this.bloom);
+      this.ink = anime ? new InkPass() : null;
+      if (this.ink) this.composer.addPass(this.ink);
+      this.bloom = q.bloom ? new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1, 0.5, 0.6) : null;
+      if (this.bloom) this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
       this.composer.setSize(innerWidth, innerHeight);
     }
     this.renderPass.scene = scene;
     this.renderPass.camera = camera;
-    const [strength, radius, threshold] = BLOOM[kind];
-    this.bloom.strength = strength;
-    this.bloom.radius = radius;
-    this.bloom.threshold = threshold;
+    if (this.ink) {
+      this.ink.scene = scene;
+      this.ink.camera = camera;
+      Object.assign(this.ink.settings, INK[kind]);
+    }
+    if (this.bloom) {
+      const [strength, radius, threshold] = BLOOM[kind];
+      this.bloom.strength = strength * (anime ? (kind === 'space' ? 0.7 : 1.05) : 1);
+      this.bloom.radius = radius;
+      this.bloom.threshold = threshold;
+    }
     this.composer.render();
   }
 }

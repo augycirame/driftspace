@@ -15,6 +15,7 @@ import { GODS } from '/shared/content/factions.js';
 import { ALIEN_RACES } from '/shared/content/aliens.js';
 import { DUNGEON_THEMES } from '/shared/content/dungeons.js';
 import { FX } from './fx.js';
+import { NOISE_GLSL } from './planettex.js';
 
 // Tiling textures shared by every planet: fine ground detail and rippling water.
 let detail = null;
@@ -57,19 +58,31 @@ function detailTextures() {
 }
 
 // A sky dome: horizon haze fading up to a deeper zenith, with the sun's disk.
-function skyDome(prof, sunDir) {
-  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color('#1a3a7a'), 0.35);
+function skyDome(prof, sunDir, anime = false) {
+  const zenith = new THREE.Color(prof.sky).lerp(new THREE.Color(anime ? '#2a6ae8' : '#1a3a7a'), anime ? 0.55 : 0.35);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { horizon: { value: new THREE.Color(prof.fog) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() } },
+    uniforms: { horizon: { value: new THREE.Color(prof.fog).lerp(new THREE.Color('#ffffff'), anime ? 0.25 : 0) }, zenith: { value: zenith }, sunDir: { value: sunDir.clone().normalize() }, anime: { value: anime ? 1 : 0 }, time: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
-      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; varying vec3 vDir;
+      uniform vec3 horizon; uniform vec3 zenith; uniform vec3 sunDir; uniform float anime; uniform float time; varying vec3 vDir;
+      ${NOISE_GLSL}
       void main() {
         vec3 d = normalize(vDir);
         float h = clamp(d.y, 0.0, 1.0);
         vec3 c = mix(horizon, zenith, pow(h, 0.6));
         float s = max(dot(d, sunDir), 0.0);
-        c += vec3(1.0, 0.95, 0.85) * (pow(s, 900.0) * 4.0 + pow(s, 12.0) * 0.25);
+        if (anime > 0.5) {
+          // Anime sky: a crisp sun disk and big cel-shaded cumulus clouds.
+          c += vec3(1.0, 0.97, 0.85) * (step(0.9993, s) * 2.0 + pow(s, 16.0) * 0.3);
+          vec2 uv = d.xz / (d.y + 0.25) * 1.6 + vec2(time * 0.004, 0.0);
+          float n = fbm3(vec3(uv, 3.0), 5);
+          float cloud = smoothstep(0.52, 0.56, n) * smoothstep(0.02, 0.18, d.y);
+          float shade = smoothstep(0.6, 0.66, fbm3(vec3(uv * 1.3 + 0.05, 3.0), 4));
+          vec3 cc = mix(vec3(0.78, 0.84, 0.96), vec3(1.0), shade);
+          c = mix(c, cc, cloud);
+        } else {
+          c += vec3(1.0, 0.95, 0.85) * (pow(s, 900.0) * 4.0 + pow(s, 12.0) * 0.25);
+        }
         gl_FragColor = vec4(c, 1.0);
       }`,
     side: THREE.BackSide, depthWrite: false, fog: false,
@@ -141,7 +154,9 @@ export class SurfaceView {
     }
     this.root.add(sun, sun.target);
     this.sun = sun;
-    if (q.sky) { this.sky = skyDome(prof, this.sunDir); this.root.add(this.sky); } else this.sky = null;
+    const anime = !!this.S.gfx?.anime;
+    if (q.sky || anime) { this.sky = skyDome(prof, this.sunDir, anime); this.root.add(this.sky); } else this.sky = null;
+    if (anime) sc.fog = new THREE.Fog(new THREE.Color(prof.fog).lerp(new THREE.Color('#ffffff'), 0.25), 160, 700);
     this.root.add(new THREE.HemisphereLight(prof.sky, prof.low, 1.1));
     this.root.add(new THREE.AmbientLight('#ffffff', 0.25));
     const sunGlow = glowSprite('#fff8e0', 260, 0.9);
@@ -496,7 +511,7 @@ export class SurfaceView {
     // Keep the sun's shadow box centered on the pilot.
     this.sun.target.position.set(me.x, me.y, me.z);
     this.sun.position.set(me.x, me.y, me.z).addScaledVector(this.sunDir, 300);
-    if (this.sky) this.sky.position.copy(this.camera.position);
+    if (this.sky) { this.sky.position.copy(this.camera.position); this.sky.material.uniforms.time.value = t; }
     if (this.liquid?.material.normalMap) this.liquid.material.normalMap.offset.set(t * 0.01, t * 0.007);
     if ((this.shadowAt = (this.shadowAt || 0) - dt) <= 0 && this.S.gfx?.q.shadows) { this.shadowAt = 0.5; this.shadowize(); }
     this.selfMesh.position.set(me.x, me.y, me.z);

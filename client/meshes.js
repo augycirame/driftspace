@@ -175,7 +175,84 @@ export function buildNpc(kind, race = null) {
 }
 
 // A pilot on foot: suit color from their name color, armor shows as plating.
+// Anime style changes how people and creatures are drawn (set by the graphics settings).
+let animeMode = false;
+export const setAnimeMode = (on) => { animeMode = on; };
+
+// An anime eye: white, a big colored iris, a dark pupil and a highlight. Faces -z.
+function animeEye(size, iris = '#3a6ae8') {
+  const e = new THREE.Group();
+  const white = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10).scale(0.8, 1.15, 0.35), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  const ir = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 10).scale(1, 1.1, 0.3), new THREE.MeshBasicMaterial({ color: iris }));
+  ir.position.set(0, -0.08, -0.12);
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8).scale(1, 1.1, 0.3), new THREE.MeshBasicMaterial({ color: '#10101a' }));
+  pupil.position.set(0, -0.08, -0.2);
+  const shine = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
+  shine.position.set(0.22, 0.25, -0.26);
+  e.add(white, ir, pupil, shine);
+  e.scale.setScalar(size);
+  return e;
+}
+
+// An anime pilot: big head, spiky hair in the pilot's color, big eyes, a sleek flight suit.
+function buildAnimePerson(color, armor) {
+  const g = new THREE.Group();
+  const suit = new THREE.MeshStandardMaterial({ color: '#2a3048', roughness: 0.6 });
+  const trim = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+  const skin = new THREE.MeshStandardMaterial({ color: '#ffe0c8', roughness: 0.8 });
+  const hairMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+  const plate = new THREE.MeshStandardMaterial({ color: armor > 60 ? '#e8c547' : armor > 20 ? '#b8c8e0' : '#5a6478', roughness: 0.4, metalness: 0.4 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.6, 4, 10), suit);
+  body.position.y = 0.85;
+  g.add(body);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.12, 0.62), trim);
+  stripe.position.y = 1.05;
+  g.add(stripe);
+  if (armor > 0) {
+    for (const s of [-1, 1]) {
+      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8).scale(1.2, 0.7, 1), plate);
+      pad.position.set(s * 0.36, 1.3, 0);
+      g.add(pad);
+    }
+  }
+  for (const s of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.45, 4, 8), suit);
+    leg.position.set(s * 0.14, 0.32, 0);
+    g.add(leg);
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.3), trim);
+    boot.position.set(s * 0.14, 0.07, -0.04);
+    g.add(boot);
+  }
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 18, 14), skin);
+  head.position.y = 1.72;
+  g.add(head);
+  // Spiky hair: a cap plus tufts sweeping back and down over the forehead.
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.43, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), hairMat);
+  cap.position.set(0, 1.76, 0.03);
+  g.add(cap);
+  const tufts = [[0, 0.32, -0.28, -0.9, 0], [-0.2, 0.28, -0.26, -0.8, 0.5], [0.2, 0.28, -0.26, -0.8, -0.5], [-0.33, 0.12, -0.05, -0.2, 1.2],
+    [0.33, 0.12, -0.05, -0.2, -1.2], [0, 0.3, 0.3, 0.9, 0], [-0.22, 0.25, 0.3, 0.8, 0.6], [0.22, 0.25, 0.3, 0.8, -0.6], [0, 0.42, 0, 0, 0]];
+  for (const [x, y, z, rx, rz] of tufts) {
+    const t = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.42, 5), hairMat);
+    t.position.set(x, 1.72 + y, z);
+    t.rotation.set(rx + Math.PI, 0, rz);
+    if (z > 0.2 || y > 0.4) t.rotation.set(rx, 0, rz);
+    g.add(t);
+  }
+  for (const s of [-1, 1]) {
+    const eye = animeEye(0.1, color);
+    eye.position.set(s * 0.15, 1.66, -0.36);
+    g.add(eye);
+  }
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.6), new THREE.MeshStandardMaterial({ color: '#3a4058', roughness: 0.4 }));
+  gun.position.set(0.32, 0.95, -0.3);
+  g.add(gun);
+  g.userData.gun = gun;
+  return g;
+}
+
 export function buildPerson(color, armor = 0) {
+  if (animeMode) return buildAnimePerson(color, armor);
   const g = new THREE.Group();
   const suit = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.2 });
   const plate = new THREE.MeshStandardMaterial({ color: armor > 60 ? '#c9a24a' : armor > 20 ? '#7a8aa0' : '#3a4250', roughness: 0.4, metalness: 0.6 });
@@ -208,6 +285,12 @@ export function buildCreature(color, size, seed = 1, shape = 'quad', def = {}) {
   const legs = [];
   const eyes = (y, z, spread = 0.25) => {
     for (const s of [-1, 1]) {
+      if (animeMode) {
+        const eye = animeEye(0.11 * size + 0.05, def.boss ? '#e83a3a' : shape === 'golem' ? '#b86bff' : '#e8a03a');
+        eye.position.set(s * spread * size * 1.1, y, z - 0.02);
+        g.add(eye);
+        continue;
+      }
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.09 * size + 0.04, 6, 6), eyeMat);
       eye.position.set(s * spread * size, y, z);
       g.add(eye);

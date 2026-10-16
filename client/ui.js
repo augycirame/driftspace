@@ -373,6 +373,15 @@ export class UI {
   options() {
     this.open('options', 'Options', (body) => {
       const gfx = this.S.gfx;
+      const hs = document.createElement('h3');
+      hs.textContent = 'Art style';
+      body.appendChild(hs);
+      const styles = { anime: 'Cel-shaded colors, ink outlines, painted skies and big-eyed characters.', realistic: 'Smooth lighting and natural colors.' };
+      for (const [id, text] of Object.entries(styles)) {
+        const name = id === 'anime' ? 'Anime' : 'Realistic';
+        const b = this.button(id === gfx.style ? `${name} ✓` : name, () => { gfx.setStyle(id); this.rerender(); }, id === gfx.style ? '' : 'alt');
+        body.appendChild(this.row(`<b>${name}</b><br><span class="small dim">${text}</span>`, b));
+      }
       const h = document.createElement('h3');
       h.textContent = 'Graphics quality';
       body.appendChild(h);
@@ -421,7 +430,7 @@ export class UI {
         <h3>Anywhere</h3><table>
         <tr><td>Tab</td><td>Gear and inventory</td></tr><tr><td>J</td><td>Story journal</td></tr><tr><td>P</td><td>Party</td></tr>
         <tr><td>K</td><td>Codex: creatures, terrains, structures, relics, gods</td></tr>
-        <tr><td>O</td><td>Options (graphics quality)</td></tr>
+        <tr><td>O</td><td>Options (art style, graphics quality)</td></tr>
         <tr><td>Enter</td><td>Chat (/p for party)</td></tr><tr><td>H</td><td>This manual</td></tr></table>
         <p class="small">Haven's sectors are safe. Beyond them, pirates hunt and other pilots can fire on you. Ore and loot get better the farther you go.</p>`;
     });

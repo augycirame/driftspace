@@ -13,7 +13,7 @@ import { Graphics } from './graphics.js';
 import { Shipyard } from './shipyard.js';
 import { GalaxyMap } from './map.js';
 import { UI } from './ui.js';
-import { buildPerson } from './meshes.js';
+import { buildPerson, setAnimeMode } from './meshes.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,6 +35,7 @@ const serverTime = () => (Date.now() + S.timeOffset) / 1000;
 const canvas = $('game');
 const gfx = new Graphics(canvas);
 S.gfx = gfx;
+setAnimeMode(gfx.anime);
 const space = new SpaceView(S);
 const surface = new SurfaceView(S);
 const dungeon = new DungeonView(S);
@@ -44,7 +45,11 @@ const map = new GalaxyMap(S, send);
 window.__views = { space, surface, dungeon };
 // Changing quality rebuilds what depends on it (planet textures, shadows, plants).
 gfx.onChange(() => {
+  setAnimeMode(gfx.anime);
+  space.clearEntities();
+  space.selfRev = -1;
   space.rebuildSectors();
+  if (dungeon.key) dungeon.enter({ ...dungeon.msg, opened: [...dungeon.opened], bossDead: dungeon.bossDead });
   if (surface.planetId) surface.enter(surface.planetId, { ...surface.data, looted: [...surface.looted] });
 });
 ui.onShipyard = () => { document.exitPointerLock?.(); yard.show(); };

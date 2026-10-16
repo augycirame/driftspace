@@ -91,6 +91,31 @@ export class SpaceView {
     this.starfield.frustumCulled = false;
     this.scene.add(this.starfield);
 
+    // Anime twinkles: four-point star sparkles for the brightest stars.
+    const sparkle = (() => {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 64;
+      const g = cv.getContext('2d');
+      g.fillStyle = '#ffffff';
+      g.beginPath();
+      g.moveTo(32, 0); g.quadraticCurveTo(35, 29, 64, 32); g.quadraticCurveTo(35, 35, 32, 64); g.quadraticCurveTo(29, 35, 0, 32); g.quadraticCurveTo(29, 29, 32, 0);
+      g.fill();
+      return new THREE.CanvasTexture(cv);
+    })();
+    const sp = [], spc = [];
+    for (let i = 0; i < 260; i++) {
+      const v = new THREE.Vector3().randomDirection().multiplyScalar(88000);
+      sp.push(v.x, v.y, v.z);
+      const c = new THREE.Color().setHSL(r() < 0.5 ? 0.58 : r() < 0.5 ? 0.12 : 0.85, 0.7, 0.85);
+      spc.push(c.r, c.g, c.b);
+    }
+    const sg2 = new THREE.BufferGeometry();
+    sg2.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+    sg2.setAttribute('color', new THREE.Float32BufferAttribute(spc, 3));
+    this.sparkles = new THREE.Points(sg2, new THREE.PointsMaterial({ size: 14, sizeAttenuation: false, map: sparkle, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    this.sparkles.frustumCulled = false;
+    this.scene.add(this.sparkles);
+
     // Stars of neighbouring systems, visible as bright points.
     this.farStars = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 4, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
     this.farStars.frustumCulled = false;
@@ -169,13 +194,14 @@ export class SpaceView {
         const sun = new THREE.Mesh(new THREE.SphereGeometry(st.r, 32, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.35).multiplyScalar(0.9) }));
         sun.position.set(st.x, st.y, st.z);
         group.add(sun);
-        const glow = glowSprite(st.color, st.r * 6, 0.4);
+        const anime = !!this.S.gfx?.anime;
+        const glow = glowSprite(st.color, st.r * (anime ? 4 : 6), anime ? 0.2 : 0.4);
         glow.position.copy(sun.position);
         group.add(glow);
         const light = new THREE.PointLight(st.color, 2.6, 0, 0);
         light.position.copy(sun.position);
         group.add(light);
-        const corona = glowSprite(new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.3), st.r * 1.9, 0.6);
+        const corona = glowSprite(new THREE.Color(st.color).lerp(new THREE.Color('#ffffff'), 0.3), st.r * 1.9, anime ? 0.4 : 0.6);
         corona.position.copy(sun.position);
         group.add(corona);
         if (this.S.gfx?.q.flare) {
@@ -408,6 +434,13 @@ export class SpaceView {
     this.updateCamera(dt);
     this.starfield.position.copy(this.camera.position);
     this.sky.position.copy(this.camera.position);
+    const anime = !!this.S.gfx?.anime;
+    this.sky.material.uniforms.anime.value = anime ? 1 : 0;
+    this.sparkles.visible = anime;
+    if (anime) {
+      this.sparkles.position.copy(this.camera.position);
+      this.sparkles.material.size = 12 + Math.sin(t * 2.3) * 3;
+    }
     this.sky.material.uniforms.bright.value = eff.invasion ? 0.7 : 1;
     if (eff.invasion) this.sky.material.uniforms.colB.value.lerp(new THREE.Color('#5a0a10'), 0.02);
     this.fx.update(dt);

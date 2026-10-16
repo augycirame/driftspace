@@ -88,6 +88,15 @@ textures and denser plant life. Planet surfaces in space are generated on the GP
 changes color from region to region. Phones and small screens start on Low; the choice is saved
 in the browser.
 
+### Art style
+
+The game looks like anime by default. Lit surfaces are cel-shaded into flat bands of light and
+shadow. Dark ink outlines trace silhouettes and creases, using an edge pass over depth and surface
+normals, and colors get a saturation lift. Skies have painted cumulus clouds, the space nebula is
+painted in flat tones with twinkling four-point stars, and pilots and creatures have spiky hair
+and big shining eyes. Switch to **Realistic** under Options (**O**) → Art style; the choice is
+saved in the browser.
+
 ## The content library (`shared/content/`)
 
 Everything planets are made of lives in plain data files. Planet generation draws from them,

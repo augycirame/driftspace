@@ -139,11 +139,11 @@ export function atmosphereMaterial(color, strength = 1) {
 // The space sky: drifting nebula clouds in the region's colors and a bright galactic band.
 export function nebulaSky() {
   const mat = new THREE.ShaderMaterial({
-    uniforms: { colA: { value: new THREE.Color('#203060') }, colB: { value: new THREE.Color('#602050') }, seed: { value: 0 }, bright: { value: 1 } },
+    uniforms: { colA: { value: new THREE.Color('#203060') }, colB: { value: new THREE.Color('#602050') }, seed: { value: 0 }, bright: { value: 1 }, anime: { value: 0 } },
     vertexShader: 'varying vec3 vDir; void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `
       precision highp float;
-      uniform vec3 colA; uniform vec3 colB; uniform float seed; uniform float bright;
+      uniform vec3 colA; uniform vec3 colB; uniform float seed; uniform float bright; uniform float anime;
       varying vec3 vDir;
       ${NOISE_GLSL}
       void main() {
@@ -152,6 +152,8 @@ export function nebulaSky() {
         float w = fbm3(p * 1.5, 4);
         float n = fbm3(p + w * 1.4, 6);
         float clouds = smoothstep(0.45, 0.8, n);
+        // Anime: clouds painted in flat bands, a bit brighter and more saturated.
+        if (anime > 0.5) clouds = floor(clouds * 4.0 + 0.3) / 4.0 * 1.05;
         float band = exp(-pow(d.y * 3.2 + (w - 0.5) * 0.8, 2.0));
         vec3 c = mix(colA, colB, smoothstep(0.3, 0.7, fbm3(p * 0.7 + 3.0, 3))) * clouds * 0.38;
         c += vec3(0.55, 0.6, 0.75) * band * 0.06 * (0.6 + n);
