@@ -260,6 +260,120 @@ def hair_geometry(X, style, m=None):
     return pos, uv, n[tris.reshape(-1)], m[tris.reshape(-1)]
 
 
+# ---- long hair: strands grown from the scalp ---------------------------------------------------------
+
+HAIR_STYLES = {
+    # roots, length range (m), card width (m), how far roots spread down the head, segments
+    'long': dict(roots=640, length=(0.4, 0.55), width=0.032, segs=12),
+    'bob': dict(roots=600, length=(0.2, 0.26), width=0.032, segs=8),
+    'ponytail': dict(roots=280, length=(0.3, 0.42), width=0.03, segs=10),
+}
+
+
+def hair_cards(X, style, seed=11):
+    """Hair cards for a style on shape X (game frame). Returns positions, normals, uvs, per-vertex
+    (grown, along, random), the base vertex each card grows from, and the vertex height for skinning."""
+    cfg = HAIR_STYLES[style]
+    rng = np.random.default_rng(seed)
+    Xg = to_game(X)
+    welded = np.array([[c[0] for c in t] for t in TRIS])
+    Nw = normals(Xg, welded)
+    J = joints_of(X)
+    head = to_game(np.array([J['head'][0]]))[0]
+    top = to_game(np.array([J['head'][1]]))[0]
+    centre = head + (top - head) * 0.45
+    body_ids = np.unique(welded)
+    hip_y = to_game(np.array([J['root'][0]]))[0][1]
+    near = body_ids[Xg[body_ids, 1] > hip_y + 0.15]
+    BP, BN = Xg[near], Nw[near]
+
+    def push_out(p, gap):
+        # Keep a point outside the body: off the nearest surface point along its normal.
+        d = np.linalg.norm(BP[None] - p[:, None], axis=2)
+        k = d.argmin(1)
+        off = ((p - BP[k]) * BN[k]).sum(1)
+        bad = off < gap
+        p[bad] += BN[k][bad] * (gap[bad] - off[bad])[:, None]
+        return p
+
+    # Roots on the scalp.
+    m = hair_mask(X, 'long')
+    scalp = np.where(m > 0.6)[0]
+    scalp = scalp[np.isin(scalp, body_ids)]
+    if style == 'ponytail':
+        # Gathered at the back of the head.
+        tie = centre + np.array([0, -0.02, 0.1])
+        roots = tie + rng.normal(0, 0.012, (cfg['roots'], 3))
+        ridx = np.array([scalp[np.argmin(np.linalg.norm(Xg[scalp] - r, axis=1))] for r in roots])
+        start_dir = np.tile(np.array([0, -0.4, 1.0]), (cfg['roots'], 1))
+    else:
+        ridx = rng.choice(scalp, cfg['roots'], replace=len(scalp) < cfg['roots'])
+        roots = Xg[ridx] + Nw[ridx] * 0.004
+        out = roots - centre
+        # Combed from a centre parting: away from the middle, then down.
+        part = np.stack([np.sign(out[:, 0]) * (np.abs(out[:, 0]) + 0.02), np.zeros(len(out)), out[:, 2] * 0.6], 1)
+        start_dir = Nw[ridx] * 0.25 + part / np.maximum(np.linalg.norm(part, axis=1, keepdims=True), 1e-6)
+        # Hair at the front is swept back and to the sides, off the face.
+        front = np.clip(-(roots - centre)[:, 2] / 0.08, 0, 1)
+        start_dir += np.stack([np.sign(out[:, 0]) * 0.4 * front, np.zeros(len(out)), 0.9 * front], 1)
+    start_dir /= np.linalg.norm(start_dir, axis=1, keepdims=True)
+    n = len(roots)
+    lengths = rng.uniform(*cfg['length'], n)
+    segs = cfg['segs']
+    layer = rng.uniform(0.003, 0.011, n)            # hair has depth: cards at different heights off the skin
+    paths = np.zeros((n, segs + 1, 3))
+    paths[:, 0] = roots
+    d = start_dir.copy()
+    face_z = head[2] - 0.03
+    chin_y = head[1] - 0.06
+    for k in range(1, segs + 1):
+        t = k / segs
+        grav = np.array([0, -1.0, 0.3])
+        d = d * (0.62 - 0.3 * t) + grav * (0.38 + 0.3 * t)
+        d /= np.linalg.norm(d, axis=1, keepdims=True)
+        p = paths[:, k - 1] + d * (lengths / segs)[:, None]
+        p = push_out(p, layer + 0.002 * k)
+        # Never in front of the face; and past the shoulders, hair falls behind them.
+        infront = (p[:, 2] < face_z) & (p[:, 1] > chin_y) & (np.abs(p[:, 0]) < 0.1)
+        p[infront, 2] = face_z
+        p[:, 0] *= np.where(p[:, 1] < chin_y, 0.97, 1.0)
+        d = p - paths[:, k - 1]
+        d /= np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-9)
+        paths[:, k] = p
+    # Cards: ribbons along each path, lying along the head (width across, facing out).
+    pos, nrm, uv, attr, root_of, hy = [], [], [], [], [], []
+    tris = []
+    for i in range(n):
+        P = paths[i]
+        base = len(pos)
+        rnd = rng.random()
+        u0 = rng.integers(0, 4) / 4                    # one of four strand clumps in the texture
+        for k in range(segs + 1):
+            t = k / segs
+            tang = P[min(k + 1, segs)] - P[max(k - 1, 0)]
+            tang /= np.linalg.norm(tang) + 1e-9
+            outv = P[k] - centre
+            outv[1] *= 0.3
+            side = np.cross(tang, outv)
+            side /= np.linalg.norm(side) + 1e-9
+            face = np.cross(side, tang)
+            if np.dot(face, outv) < 0:
+                face = -face
+            w = cfg['width'] * (1.0 - 0.45 * t) * (0.8 + 0.4 * rnd)
+            for sgn, uu in ((-1, 0.0), (1, 1.0)):
+                pos.append(P[k] + side * w * 0.5 * sgn)
+                nrm.append(face)
+                uv.append([u0 + uu * 0.25, t])
+                attr.append([1.0, t, rnd])
+                root_of.append(ridx[i])
+                hy.append(P[k][1])
+        for k in range(segs):
+            a = base + k * 2
+            tris += [[a, a + 2, a + 1], [a + 1, a + 2, a + 3]]
+    return (np.array(pos), np.array(nrm), np.array(uv), np.array(attr), np.array(root_of), np.array(hy),
+            np.array(tris, dtype=np.uint32), head, to_game(np.array([J['neck01'][0]]))[0][1])
+
+
 def bun_geometry(X):
     """A bun of hair at the back of the head, as a lumpy sphere (game frame)."""
     J = joints_of(X)
@@ -333,6 +447,13 @@ class GLB:
 
 
 F32, U16, U8, U32 = 5126, 5123, 5121, 5125
+
+
+def quant_weights(w):
+    """Skin weights as bytes that still add up to exactly 255."""
+    q = np.round(w / np.maximum(w.sum(1, keepdims=True), 1e-9) * 255).astype(np.int32)
+    q[np.arange(len(q)), q.argmax(1)] += 255 - q.sum(1)
+    return q.astype(np.uint8)
 ARRAY, ELEMENTS = 34962, 34963
 
 
@@ -402,7 +523,7 @@ def main():
     base_m = shape('male')
     FLOOR = base_m[np.unique(np.array(BODY_V))][:, 1].min()
     glb = GLB()
-    names = ['muscle', 'heavy', 'thin', 'old', 'african', 'asian', 'caucasian', 'elf']
+    names = ['muscle', 'heavy', 'thin', 'old', 'african', 'asian', 'caucasian', 'elf', 'covered']
     for sex in ('male', 'female'):
         base = shape(sex)
         variants = {
@@ -411,6 +532,9 @@ def main():
             'caucasian': shape(sex, eth='caucasian'),
             'elf': shape(sex, extra=[('ears/l-ear-shape-pointed.target', 1), ('ears/r-ear-shape-pointed.target', 1),
                                      ('ears/l-ear-scale-vert-incr.target', 0.6), ('ears/r-ear-scale-vert-incr.target', 0.6)]),
+            # Under clothes: a smooth chest (no nipples; for women a firm, supported shape).
+            'covered': shape(sex, extra=[('breast/nipple-point-decr.target', 1), ('breast/nipple-size-decr.target', 1)]
+                             + ([('breast/female-young-averagemuscle-averageweight-averagecup-maxfirmness.target', 0.8)] if sex == 'female' else [])),
         }
         # Skeleton (bone heads in the game frame), parents first.
         J = joints_of(base)
@@ -456,8 +580,8 @@ def main():
 
         def mesh_prims(P, N, UV, idx, joints, weights, morphs):
             attrs = {'POSITION': glb.acc(P.astype(np.float32), 'VEC3', F32, ARRAY, True), 'NORMAL': glb.acc(N.astype(np.float32), 'VEC3', F32, ARRAY),
-                     'TEXCOORD_0': glb.acc(UV.astype(np.float32), 'VEC2', F32, ARRAY), 'JOINTS_0': glb.acc(joints.astype(np.uint16), 'VEC4', U16, ARRAY),
-                     'WEIGHTS_0': glb.acc(weights.astype(np.float32), 'VEC4', F32, ARRAY)}
+                     'TEXCOORD_0': glb.acc(UV.astype(np.float32), 'VEC2', F32, ARRAY), 'JOINTS_0': glb.acc(joints.astype(np.uint8), 'VEC4', U8, ARRAY),
+                     'WEIGHTS_0': glb.acc(quant_weights(weights), 'VEC4', U8, ARRAY, normalized=True)}
             prim = {'attributes': attrs, 'indices': glb.acc(idx.reshape(-1).astype(np.uint32), 'SCALAR', U32, ELEMENTS)}
             if morphs:
                 # Positions only: the normals barely change, and leaving them out halves the file.
@@ -510,6 +634,19 @@ def main():
             # How much hair grows at each vertex, so the hairline can fade out softly.
             prim['attributes']['COLOR_0'] = glb.acc(np.repeat(Mh[:, None], 3, 1).astype(np.float32), 'VEC3', F32, ARRAY)
             add_mesh(f'{sex}_hair_{style}', prim, names)
+        # Long flowing styles: cards grown from the scalp. Up near the head they move with it;
+        # where they lie on the shoulders and back they follow the upper spine instead.
+        spine_i = order.index('spine02')
+        for style in HAIR_STYLES:
+            P, Nh, UVh, A, rid, hy, tri, headp, neck_y = hair_cards(base, style)
+            nv = len(P)
+            hj = np.zeros((nv, 4), np.uint16); hj[:, 0] = head_i; hj[:, 1] = spine_i
+            wb = smooth(neck_y + 0.02, neck_y - 0.12, hy)
+            hw = np.zeros((nv, 4), np.float32); hw[:, 0] = 1 - wb; hw[:, 1] = wb
+            # (No morphs: head shapes differ too little to matter for hair, and they would triple the file.)
+            prim = mesh_prims(P, Nh, UVh, tri, hj, hw, [])
+            prim['attributes']['COLOR_0'] = glb.acc(A.astype(np.float32), 'VEC3', F32, ARRAY)
+            add_mesh(f'{sex}_hair_{style}_cards', prim, [])
         Pbun, UVbun, Nbun = bun_geometry(base)
         idx = np.arange(len(Pbun), dtype=np.uint32).reshape(-1, 3)
         nbun = len(Pbun)
@@ -626,6 +763,39 @@ def bake(X):
     beard = smooth(mouth[1] + 0.02, mouth[1] - 0.005, y) * face * smooth(0.0, 0.03, np.hypot(x - mouth[0], (y - mouth[1]) * 1.5) - 0.015) * (y > Jg['neck01'][0][1] + 0.02)
     faceimg = np.stack([lips, brow, lash, beard], -1)
     save(dilate(faceimg, hit), os.path.join(OUT, 'people-face.png'))
+
+    # Skin: where blood shows (cheeks, nose, ears, lips' surroundings, knuckles), darker creases
+    # (knuckles, elbows, knees, under the eyes, around the nostrils), freckles, and mottling.
+    head = R['part'] < 0.1
+    nose = Jg['special04'][0] if 'special04' in Jg else mouth
+    nose_tip = np.array([0.0, (eyeL[1] + mouth[1]) / 2 - 0.004, min(eyeL[2], mouth[2]) - 0.03])
+    flush = np.zeros_like(x)
+    for e in (eyeL, eyeR):
+        cheek = np.array([e[0] * 1.35, e[1] - 0.035, e[2] + 0.01])
+        flush = np.maximum(flush, np.exp(-(((x - cheek[0]) / 0.022) ** 2 + ((y - cheek[1]) / 0.02) ** 2)) * (z < cheek[2] + 0.02))
+    flush = np.maximum(flush, np.exp(-((x / 0.012) ** 2 + ((y - nose_tip[1]) / 0.014) ** 2)) * (z < nose_tip[2] + 0.025))
+    ear = head * (np.abs(x) > 0.062) * (np.abs(y - eyeL[1] + 0.01) < 0.035) * (z > eyeL[2] + 0.04)
+    flush = np.maximum(flush, ear * 0.8)
+    flush = np.maximum(flush, smooth(0.035, 0.02, np.hypot(x - mouth[0], (y - mouth[1]) * 1.3)) * head * 0.35)
+    hands = (R['part'] > 0.5) & (R['part'] < 0.8)
+    knuckles = hands * smooth(0.84, 0.9, R['arm']) * (1 - smooth(0.95, 1.0, R['arm']))
+    flush = np.maximum(flush, knuckles * 0.6) * (head | hands)
+    legs = R['part'] > 0.9
+    elbow = hands * np.exp(-((R['arm'] - 0.4) / 0.025) ** 2) * (N[..., 2] > 0.3)
+    knee = legs * np.exp(-((R['leg'] - 0.5) / 0.03) ** 2) * (N[..., 2] < -0.3)
+    undereye = np.zeros_like(x)
+    for e in (eyeL, eyeR):
+        undereye = np.maximum(undereye, np.exp(-(((x - e[0]) / 0.016) ** 2 + ((y - e[1] + 0.017) / 0.006) ** 2)) * (z < e[2] + 0.01))
+    creases = np.clip(np.maximum.reduce([knuckles * 0.7, elbow, knee * 0.8, undereye * head]), 0, 1)
+    # Freckles: small spots, thickest across the nose and cheeks and on the shoulders.
+    spots = rng.random((TEX // 4, TEX // 4)) > 0.86
+    spots = np.array(Image.fromarray((spots * 255).astype(np.uint8)).resize((TEX, TEX), Image.BILINEAR)) / 255
+    fzone = np.maximum(np.exp(-((x / 0.05) ** 2 + ((y - eyeL[1] + 0.03) / 0.03) ** 2)) * head * (z < eyeL[2] + 0.02),
+                       ((R['part'] > 0.2) & (R['part'] < 0.7)) * smooth(Jg['spine01'][0][1] - 0.15, Jg['spine01'][0][1], y) * 0.6)
+    freckles = spots * fzone
+    mottle = np.array(Image.fromarray((rng.random((48, 48)) * 255).astype(np.uint8)).resize((TEX, TEX), Image.BICUBIC)) / 255
+    skin = np.stack([flush, creases, freckles, mottle], -1)
+    save(dilate(skin, hit), os.path.join(OUT, 'people-skin.png'))
 
     # The eye: luminance plus an iris mask, so the shader can color irises per person.
     eyeA = np.asarray(Image.open(os.path.join(DATA, 'eyes/materials/brown_eye.png')).convert('RGBA'), np.float32) / 255

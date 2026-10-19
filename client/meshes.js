@@ -272,13 +272,16 @@ export function buildHuman(opts) {
     const o = { armor: 0, height: 1, width: 1, ...opts };
     const female = !!o.female;
     const dwarf = o.width > 1.1;
+    // Real skin, hair and eyes for the person's people (fantasy eyes stay for vampires and werewolves).
+    const L = lookFrom((o.look ?? 1) ^ 0x51ed, o.people || 'human', !!o.crown);
+    const fantasyEyes = o.people === 'vampire' || o.people === 'werewolf';
     return modelOr({
-      female, skin: o.skin, hair: o.hair, eyes: o.eyes, hairStyle: female ? 'bun' : 'crop', beard: o.beard, stubble: female ? 0 : 0.3, robe: o.robe,
+      female, skin: L.skin, hair: L.hair, eyes: fantasyEyes ? o.eyes : L.eyes, melanin: L.melanin, flush: L.flush, freckles: L.freckles, hairStyle: o.hairStyle || (female ? 'long' : 'crop'), beard: o.beard, stubble: female ? 0 : 0.3, robe: o.robe,
       top: o.tunic, pants: o.robe ? o.tunic : o.pants || '#3a3236', boots: o.boots || '#4a3a2a', gloves: '#3a2e26', gloved: !!o.helmet, sleeve: o.robe ? 0.79 : 0.42,
       pantLen: 0.86, bootTop: 0.68, skirt: o.robe ? 0.95 : 0.3, cloak: o.cloak, fur: o.fur, apron: o.apron, armor: o.armor, helmet: o.helmet, plume: o.plume,
-      crown: o.crown, hat: o.hat, spear: o.spear, shield: o.shield, staff: o.staff, hammer: o.hammer, bow: o.bow, lute: o.lute,
+      crown: o.crown, hat: o.hat, dance: !!o.lute, spear: o.spear, shield: o.shield, staff: o.staff, hammer: o.hammer, bow: o.bow, lute: o.lute,
       height: o.height * (dwarf ? 0.95 : 1), width: dwarf ? 1.25 : 1,
-      build: { elf: o.ears ? 1 : 0, heavy: dwarf ? 0.9 : 0, muscle: dwarf ? 0.9 : 0.2, thin: o.ears ? 0.4 : 0, old: o.crown ? 0.4 : 0 },
+      build: { ...L.build, elf: o.ears ? 1 : 0, heavy: dwarf ? 0.9 : L.build.heavy, muscle: dwarf ? 0.9 : L.build.muscle, thin: o.ears ? 0.4 : L.build.thin },
     }, () => buildRealHuman(opts));
   }
   const o = { armor: 0, female: false, ears: false, beard: false, height: 1, width: 1, gun: true, ...opts };
@@ -416,10 +419,15 @@ export function buildNative(n) {
   const any = (list) => list[Math.floor(r() * list.length)];
   const role = n.role;
   const o = {
+    people: n.people, look: n.look,
     tunic: any(P.clothes), skin: any(P.skin), hair: any(P.hair), eyes: any(P.eyes), female: !!n.female,
     ears: !!P.ears, height: P.height * (0.95 + r() * 0.1), width: n.people === 'dwarf' ? 1.28 : 1,
     beard: !n.female && r() < P.beard ? (n.people === 'dwarf' ? 'long' : 'short') : false, gun: false,
   };
+  // Hair styles: women wear it long, in a bob, a ponytail or a bun; most men short; many elves long.
+  const hr = r();
+  o.hairStyle = n.female ? ['long', 'long', 'bob', 'ponytail', 'bun'][Math.floor(hr * 5)]
+    : n.people === 'elf' ? (hr < 0.6 ? 'long' : 'ponytail') : hr < 0.12 ? 'long' : hr < 0.2 ? 'ponytail' : 'crop';
   if (n.people === 'vampire') o.cloak = '#1a0e14';
   if (n.people === 'werewolf') o.fur = '#8a7a60';
   if (role === 'ruler') { o.crown = true; o.cloak = n.people === 'vampire' ? '#3a0a14' : '#7a1a2a'; o.robe = n.people !== 'dwarf'; }
@@ -577,7 +585,7 @@ function modelOr(opts, fallback) {
   const wrap = new THREE.Group();
   let cur = fallback();
   wrap.add(cur);
-  wrap.userData.animate = (t, m) => cur.userData.animate?.(t, m);
+  wrap.userData.animate = (...a) => cur.userData.animate?.(...a);
   wrap.userData.gun = cur.userData.gun;
   loadPeople().then(() => {
     const real = buildModelPerson(opts);
@@ -597,7 +605,7 @@ function buildRealPerson(color, armor) {
   const female = pick([0, 1], color, 11) === 1;
   const look = lookFrom(Array.from(String(color)).reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619), 2166136261));
   return modelOr({
-    female, skin: look.skin, hair: pick(HAIR, color), eyes: pick(IRIS, color, 7), hairStyle: female ? 'bun' : 'crop', build: look.build, stubble: female ? 0 : 0.35,
+    female, skin: look.skin, hair: look.hair, eyes: look.eyes, melanin: look.melanin, flush: look.flush, freckles: look.freckles, hairStyle: female ? (look.r() < 0.5 ? 'ponytail' : 'bun') : 'crop', build: look.build, stubble: female ? 0 : 0.35,
     top: suit, pants: suit, boots: '#2a2622', gloves: '#24221f', gloved: true, suit: true, strap: '#2c2c28', sleeve: 0.79, pantLen: 0.86, bootTop: 0.62, gun: true, armor,
     height: female ? 1.0 : 1.03,
   }, () => buildRealHumanPilot(suit, color, armor, female));

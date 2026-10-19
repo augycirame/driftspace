@@ -920,7 +920,7 @@ export class SurfaceView {
     }
     if (this.drift) this.drift.userData.update(t, this.camera.position);
     const moving = Math.hypot(this.vel.x, this.vel.z);
-    this.selfMesh.userData.animate?.(t, Math.min(1, moving / 4));
+    this.selfMesh.userData.animate?.(t, Math.min(1, moving / 1.2), moving);
     for (const [i, tail] of (this.selfMesh.userData.tails || []).entries()) {
       tail.rotation.x = -0.5 - Math.min(0.9, moving * 0.12) + Math.sin(t * 6 + i * 1.7) * (0.08 + moving * 0.02);
     }
@@ -960,8 +960,9 @@ export class SurfaceView {
       }
       const speed = Math.hypot(o.x - (v.px ?? o.x), o.z - (v.pz ?? o.z)) * 60;
       v.px = o.x; v.pz = o.z;
-      v.walk = (v.walk || 0) + (Math.min(1, speed / 4) - (v.walk || 0)) * 0.15;
-      v.group.userData.animate?.(t, v.walk);
+      v.walk = (v.walk || 0) + (Math.min(1, speed / 1.2) - (v.walk || 0)) * 0.15;
+      v.speed = (v.speed || 0) + (speed - (v.speed || 0)) * 0.15;
+      v.group.userData.animate?.(t, v.walk, v.speed);
       v.group.position.set(o.x, o.y, o.z);
       v.group.rotation.y = o.yaw;
       v.group.visible = !o.dead;
@@ -1001,7 +1002,8 @@ export class SurfaceView {
         v.px = c.x; v.pz = c.z;
         const arms = v.group.userData.arms;
         v.walk = (v.walk || 0) + ((moving ? 1 : 0) - (v.walk || 0)) * 0.15;
-        if (v.group.userData.animate) v.group.userData.animate(t + v.phase, v.walk);
+        v.speed = (v.speed || 0) + ((moving ? c.speed || 3.2 : 0) - (v.speed || 0)) * 0.15;
+        if (v.group.userData.animate) v.group.userData.animate(t + v.phase, v.walk, v.speed);
         else {
           if (arms) arms[0].rotation.x = moving ? Math.sin(t * 7 + v.phase) * 0.4 : 0;
           v.group.position.y += moving ? Math.abs(Math.sin(t * 7 + v.phase)) * 0.04 : 0;

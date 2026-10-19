@@ -98,7 +98,9 @@ Three styles, switched under Options (**O**) → Art style and saved in the brow
   scanned (CC0) surface detail; wind-blown grass, leafy trees and reflective water. People are
   real, rigged human bodies (from MakeHuman's CC0 assets, see `tools/people/`): men and women
   of every build, age and ethnicity, elves with pointed ears and stocky dwarves, with real eyes
-  and hair, walking and gripping their weapons. Pilots wear a flight suit with harness, belt
+  and hair (long and flowing, bobs, ponytails, buns or short), real skin tones from very fair to
+  very dark with flushed cheeks, creases and freckles, and motion-captured movement: idling,
+  walking, running, nodding and shaking their heads, bards dancing, pilots gripping their rifles. Pilots wear a flight suit with harness, belt
   pouches, gloves, boots and knee pads, rifle at the ready; natives wear tunics, robes, cloaks,
   helmets and crowns. Ships are panelled hulls with rivets, chipped paint and grime, a glass
   canopy, glowing bell nozzles, swept wings with navigation lights and cannons. In space: a Milky
