@@ -1,7 +1,7 @@
 // The game's connection to Claude: townsfolk conversations and the AI director's judgment.
 //
-// Turned on by setting ANTHROPIC_API_KEY on the server. Without it everything falls back to
-// scripted behavior. Calls are rate limited per player and capped per day, and every reply is
+// Off unless the server has both ANTHROPIC_API_KEY and AI_ENABLED=1 (it costs money per call).
+// Otherwise everything falls back to scripted behavior. Calls are rate limited per player and capped per day, and every reply is
 // structured JSON validated against a schema, so the model can only choose among actions the
 // game already allows - it never hands out items or credits on its own.
 
@@ -14,7 +14,7 @@ const MAX_CONCURRENT = 6;
 export class AI {
   constructor(log = () => {}) {
     this.log = log;
-    this.enabled = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) && process.env.AI_DISABLED !== '1';
+    this.enabled = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) && process.env.AI_ENABLED === '1' && process.env.AI_DISABLED !== '1';
     this.client = this.enabled ? new Anthropic() : null;
     this.inFlight = 0;
     this.day = 0;

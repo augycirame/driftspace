@@ -22,8 +22,9 @@ services:
       - key: ADMIN
         sync: false
       # Optional: a Claude API key lets townsfolk hold real conversations and lets the AI
-      # director run the galaxy. Without it, NPCs use scripted dialogue. Set it in the
-      # dashboard; it isn't stored here. NPC_MODEL and AI_DAILY_LIMIT tune model and cost.
+      # director run the galaxy. It is billed per call, so it also needs AI_ENABLED=1 (off by
+      # default). Without them, NPCs use scripted dialogue. Set both in the dashboard; they
+      # aren't stored here. NPC_MODEL and AI_DAILY_LIMIT tune model and cost.
       - key: ANTHROPIC_API_KEY
         sync: false
     disk:

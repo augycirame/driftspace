@@ -203,13 +203,14 @@ events. Buy where it's made, sell where it's wanted. Credits work too, at a 10% 
 
 **Talking** (E). Every townsperson greets you according to who you are to them and what's
 happening: war, famine, festival, night, weather. They trade, change money, heal, teach magic,
-lift curses, share rumors and hand out work. With an `ANTHROPIC_API_KEY` set on the server,
+lift curses, share rumors and hand out work. With an `ANTHROPIC_API_KEY` and `AI_ENABLED=1` set on
+the server (off by default, since API calls are billed),
 you can also simply talk to them: each one is voiced by Claude with their own character sheet
 (people, temperament, job, town, realm, ruler, wars, recent events, how they regard you), and
 they react within their role: open their shop, offer work, end the conversation, or (if
 gravely insulted, and armed) attack. Good conversations win a little standing. Calls are rate
 limited per player and capped per day (`AI_DAILY_LIMIT`, default 3000); `NPC_MODEL` picks the
-model (default `claude-opus-5-5`). Without a key, NPCs use scripted dialogue.
+model (default `claude-opus-5-5`). Otherwise NPCs use scripted dialogue.
 
 **Climate, weather and day.** Worlds are frozen, cold, temperate, humid, arid or scorching, with
 weather that comes and goes: rain, thunderstorms, snow, blizzards, fog, sandstorms and ashfall
