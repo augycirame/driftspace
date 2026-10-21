@@ -766,7 +766,7 @@ export class Surfaces {
       if (p.parked?.planet === me.planet) parked.push({ name: p.name, key: p.key, x: p.parked.x, z: p.parked.z, rev: p.shipRev });
       if (oc === conn || p.mode !== 'surface' || p.planet !== me.planet) continue;
       const w = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
-      players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0, wolf: !!p.wolf, mech: p.inMech ? this.w.powers.mechItem(p)?.tier || 1 : 0, rank: p.guild ? rankOf(p.guild.merit) : null });
+      players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0, wolf: !!p.wolf, mech: p.inMech ? this.w.powers.mechItem(p)?.tier || 1 : 0, rank: p.guild ? rankOf(p.guild.merit) : null, title: this.w.kingdoms.titleOf(p) });
     }
     conn.seenNatives ||= new Set();
     const creatures = inst ? [...inst.creatures.values()].map((c) => {

@@ -88,6 +88,7 @@ export class Talk {
     if (this.w.powers && this.w.powers.teachOptions(c, conn.player).length) o.push(['learn', 'Can you teach me magic?']);
     if (c.role === 'priest' && conn.player.curse) o.push(['cure', 'Can you lift my curse?']);
     if (this.w.quests) o.unshift(...this.w.quests.talkOptions(conn, c));
+    if (this.w.kingdoms && conn.talk) o.unshift(...this.w.kingdoms.talkOptions(conn, c, conn.talk.pid));
     o.push(['news', 'What news?']);
     if (this.w.quests) o.push(['work', 'Is there any work?']);
     o.push(['bye', 'Farewell.']);
@@ -143,6 +144,7 @@ export class Talk {
     if (opt.startsWith('accept:')) return this.w.quests.accept(conn, cur, opt.slice(7));
     if (opt.startsWith('q:')) return this.w.quests.talkAction(conn, cur, opt);
     if (opt.startsWith('spell:')) return this.w.powers.learn(conn, cur, opt.slice(6));
+    if (opt.startsWith('k:')) return this.w.kingdoms.action(conn, cur, opt);
     switch (opt) {
       case 'decline': return say(pickOne(['Suit yourself.', 'Another time, then.']), { options: this.options(conn, c) });
       case 'trade': if (TRADERS.includes(c.role)) return this.market(conn, pid, town); break;

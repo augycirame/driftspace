@@ -202,6 +202,16 @@ first party to clear the front line opens the next floor for the whole server, w
 to everyone. Whoever lands the killing blow takes the **Last Attack bonus**: a unique item, or a
 legendary one on every fifth floor.
 
+## Player kingdoms
+
+Rise through a realm's ranks by talking to its ruler in the capital. With standing 30, **swear
+fealty** and be knighted. With standing 60 and 3,000 credits, **petition for a fief**: you become lord
+of a town and collect its taxes every hour you play. With standing 85, a lord can **claim the
+throne** if the realm is unstable or they are a legend (Spire floor 3, or a B-rank guild card). A pilot
+on the throne rules through a regent: they draw on the treasury, declare war, make peace and choose
+their title. Rebels can still overthrow a ruler who lets stability fall too low. Titles show over
+players' heads.
+
 ## The Mercenary Guild
 
 Every city has a **guild hall** (walk up and press E) and every station a guild terminal (in the
@@ -352,6 +362,7 @@ planet), `/town [i]`, `/pos <x> <z>`, `/war`, `/event famine|plague|festival|rai
 | `shared/towns.js`, `server/politics.js`, `server/natives.js` | Towns, realms and people are generated from the seed; what happens to them afterwards (wars, deaths, coups, markets) is simulated and saved per visited world. |
 | `server/talk.js`, `server/quests.js`, `server/ai.js` | Conversations, markets and quests; Claude voices townsfolk with structured, role-limited replies. |
 | `server/powers.js`, `server/bases.js`, `server/director.js` | Skills, magic, powers, curses and mechs; bases, stations and crafting; the AI director. |
+| `server/kingdoms.js` | Player knights, lords and rulers: fealty, fiefs, taxes and the throne. |
 | `server/tower.js`, `shared/tower.js` | The Spire: floors, floor bosses, the front line and last-attack bonuses. |
 | `server/guild.js`, `shared/guild.js` | The Mercenary Guild: contract boards, ranks and merit, wanted outlaws. |
 | Interest management | In space, each client subscribes to the 3×3 sectors around it. On a planet, it hears only that planet. |

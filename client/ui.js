@@ -4,7 +4,7 @@
 import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
 import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, SHIP_CLASSES, upgradeCost, cargoTotal, canAfford, blockAllowed } from '/shared/rules.js';
 import { RECIPES, RECIPE_IDS, recipeCost } from '/shared/crafting.js';
-import { RANKS, MAX_CONTRACTS } from '/shared/guild.js';
+import { RANKS, MAX_CONTRACTS, rankOf } from '/shared/guild.js';
 import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, WEAPON_IDS, GRADES, AFFIXES, MAX_PLUS, ENHANCE_CHANCE, enhanceCost, itemName, itemColor, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
 import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle, ALIEN_RACES, DUNGEON_THEMES } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
@@ -227,7 +227,10 @@ export class UI {
         ARMOR_SLOT_IDS.map((s) => { const a = find(eq[s]); return `<tr><td>${ARMOR_SLOTS[s].name}</td><td>${a ? `<span style="color:${itemColor(a)}">${esc(itemName(a))}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
         RELIC_SLOTS.map((s, i) => { const r = find(eq[s]); return `<tr><td>Relic ${i + 1}</td><td>${r ? `<span style="color:${relicColor(r)}">${esc(itemName(r))}</span> <span class="dim small">${describeBonus(RELICS[r.type].bonus)}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
         `<tr><td>Armor</td><td>${you.armor?.armor || 0} (${Math.round((you.armor?.reduction || 0) * 100)}% damage reduction)</td></tr>` +
-        `<tr><td>Health</td><td>${Math.round(you.hp)} / ${you.maxHp}</td></tr></table>`;
+        `<tr><td>Health</td><td>${Math.round(you.hp)} / ${you.maxHp}</td></tr>` +
+        (you.title ? `<tr><td>Title</td><td style="color:#ffd890">${esc(you.title)}</td></tr>` : '') +
+        (you.guild ? `<tr><td>Guild</td><td style="color:${RANKS[rankOf(you.guild.merit)].color}">${RANKS[rankOf(you.guild.merit)].id}-rank · ${you.guild.merit} merit</td></tr>` : '') +
+        (you.spire ? `<tr><td>Spire</td><td>Floor ${you.spire} cleared</td></tr>` : '') + '</table>';
       body.appendChild(top);
       const h = document.createElement('h3');
       h.textContent = `Inventory (${you.inv.items.length}/24)`;
@@ -625,6 +628,7 @@ export class UI {
       const name = (id) => v.realms.find((r) => r.id === id)?.name || '?';
       const word = (x) => (x <= -60 ? 'enemy' : x <= -30 ? 'unwelcome' : x < 20 ? 'stranger' : x < 50 ? 'friend' : x < 80 ? 'honored' : 'hero');
       if (!v.realms.length) body.innerHTML = '<p class="dim">Nobody lives here.</p>';
+      else body.appendChild(Object.assign(document.createElement('p'), { className: 'small dim', textContent: 'Rise in a realm: win its people over, then talk to its ruler in the capital to swear fealty (standing 30), ask for a fief to rule and tax (standing 60), and at last claim the throne (standing 85, when the realm is unstable or you are a legend of the Spire or the Guild).' }));
       for (const r of v.realms) {
         const div = document.createElement('div');
         div.className = 'realm';

@@ -1027,13 +1027,19 @@ export class SurfaceView {
       if (o.mode !== 'surface') continue;
       seen.add(o.id);
       let v = this.others.get(o.id);
-      const armorKey = `${Math.round((o.armor || 0) / 20)}|${o.wolf ? 'w' : ''}|${o.mech || 0}|${o.weapon || ''}`;
+      const armorKey = `${Math.round((o.armor || 0) / 20)}|${o.wolf ? 'w' : ''}|${o.mech || 0}|${o.weapon || ''}|${o.title || ''}|${o.rank ?? ''}`;
       if (!v || v.armorKey !== armorKey) {
         if (v) this.root.remove(v.group);
         const group = this.formMesh(o.color, o.armor, o.wolf, o.mech, o.weapon);
         const lb = label((o.rank != null ? `[${RANKS[o.rank].id}] ` : '') + o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color, 0.8);
         lb.position.y = o.mech ? 5.4 : o.wolf ? 3 : 2.5;
         group.add(lb);
+        if (o.title) {
+          // Knights, lords and rulers wear their title under their name.
+          const tl = label(o.title, '#ffd890', 0.55);
+          tl.position.y = lb.position.y + 0.42;
+          group.add(tl);
+        }
         const bar = healthBar(0.04);
         bar.position.y = 2.2;
         group.add(bar);

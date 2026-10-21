@@ -69,6 +69,7 @@ export class Politics {
     const name = s?.names[npc.id] || npc.name;
     if (npc.role === 'ruler') {
       const r = this.ruler(pid, npc.realm);
+      if (r?.player) return `Regent ${name}`;
       if (r && r.npc !== npc.id) return `${r.title} ${r.name}`;
     }
     return npc.title ? `${npc.title} ${name}` : name;
@@ -224,7 +225,8 @@ export class Politics {
         r.event = null;
       }
       // Rulers age, sicken and are sometimes pushed.
-      if (chance(0.0007)) this.succession(pid, id, `${this.ruler(pid, id)?.title || 'The ruler'} ${this.ruler(pid, id)?.name || ''} has died`.replace('  ', ' '));
+      // Pilots on a throne don't die of old age; they can still be overthrown.
+      if (!r.ruler?.player && chance(0.0007)) this.succession(pid, id, `${this.ruler(pid, id)?.title || 'The ruler'} ${this.ruler(pid, id)?.name || ''} has died`.replace('  ', ' '));
       else if (r.stability < 15 && chance(0.04)) {
         this.succession(pid, id, `Rebels have overthrown ${this.ruler(pid, id)?.title} ${this.ruler(pid, id)?.name} of the ${d.name}`);
         r.stability = 40;
