@@ -103,14 +103,20 @@ test('a mech takes the hits and fires a cannon', () => {
 test('bases: claims, beds, chests, crafting and player stations', () => {
   const { world, conn, p, haven } = setup('Builder');
   const S = world.surfaces;
-  p.px = 150; p.pz = 150; p.py = S.ground(haven.id, 150, 150);
+  // Open ground, away from the towns and cities.
+  let X = 150, Z = 150;
+  const towns = townsOf(haven);
+  for (const [cx, cz] of [[150, 150], [-150, 150], [150, -150], [-150, -150], [250, 0], [0, 250], [-250, 0], [0, -250], [300, 300], [-300, -300]]) {
+    if (towns.every((t) => Math.hypot(t.x - cx, t.z - cz) > t.radius + 25)) { X = cx; Z = cz; break; }
+  }
+  p.px = X; p.pz = Z; p.py = S.ground(haven.id, X, Z);
   p.cargo = { wood: 100, stone: 50, iron: 200, gold: 20, hide: 20, copper: 40 };
   const g = (v) => Math.floor(v / 2);
   const gy = g(p.py) + 1;
-  S.build(conn, { gx: g(150), gy, gz: g(152), block: 'banner' });
-  S.build(conn, { gx: g(152), gy, gz: g(150), block: 'bed' });
-  S.build(conn, { gx: g(148), gy, gz: g(150), block: 'chest' });
-  S.build(conn, { gx: g(150), gy, gz: g(148), block: 'bench' });
+  S.build(conn, { gx: g(X), gy, gz: g(Z + 2), block: 'banner' });
+  S.build(conn, { gx: g(X + 2), gy, gz: g(Z), block: 'bed' });
+  S.build(conn, { gx: g(X - 2), gy, gz: g(Z), block: 'chest' });
+  S.build(conn, { gx: g(X), gy, gz: g(Z - 2), block: 'bench' });
   const blocks = S.saved(haven.id).blocks;
   assert.equal(Object.values(blocks).filter((b) => b.o === 'Builder').length, 4);
   assert.ok(p.bed);
@@ -118,9 +124,9 @@ test('bases: claims, beds, chests, crafting and player stations', () => {
   const inbox2 = [];
   const other = world.connect((m) => inbox2.push(m), () => {});
   world.join(other, 'rival', 'Rival');
-  other.player.px = 152; other.player.pz = 152; other.player.py = p.py;
+  other.player.px = X + 2; other.player.pz = Z + 2; other.player.py = p.py;
   other.player.cargo = { wood: 10 };
-  S.build(other, { gx: g(154), gy, gz: g(154), block: 'wood' });
+  S.build(other, { gx: g(X + 4), gy, gz: g(Z + 4), block: 'wood' });
   assert.equal(Object.values(blocks).filter((b) => b.o === 'Rival').length, 0);
   assert.ok(inbox2.some((m) => m.t === 'toast' && /claimed/.test(m.msg)));
   // Store and take materials.
