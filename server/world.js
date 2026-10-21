@@ -28,6 +28,8 @@ import { Dungeons } from './dungeon.js';
 import { Politics } from './politics.js';
 import { Talk } from './talk.js';
 import { Quests } from './quests.js';
+import { Guild } from './guild.js';
+import { rankOf } from '../shared/guild.js';
 import { AI } from './ai.js';
 import { Powers } from './powers.js';
 import { Bases } from './bases.js';
@@ -57,6 +59,7 @@ export class World {
     this.surfaces = new Surfaces(this);
     this.talk = new Talk(this);
     this.quests = new Quests(this);
+    this.guild = new Guild(this);
     this.powers = new Powers(this);
     this.bases = new Bases(this);
     this.director = new Director(this);
@@ -207,7 +210,7 @@ export class World {
       rep: { empire: 0, rebellion: 0, ...rec.rep }, favor: { ...rec.favor }, blessing: rec.blessing || null,
       looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
       standing: { ...rec.standing }, coins: { ...rec.coins }, goods: { ...rec.goods },
-      quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, charm: { ...rec.charm },
+      quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, guild: rec.guild ? JSON.parse(JSON.stringify(rec.guild)) : null, charm: { ...rec.charm },
       bed: rec.bed || null, skills: { ...rec.skills }, spells: [...(rec.spells || [])], power: rec.power || null, curse: rec.curse || null, energy: rec.energy ?? 100, mana: rec.mana,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
@@ -239,7 +242,7 @@ export class World {
       credits: p.credits, cargo: p.cargo, ship: p.ship, upg: p.upg, inv: p.inv, tutorial: p.tutorial, tutCount: p.tutCount,
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
       rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
-      standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, charm: p.charm,
+      standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, guild: p.guild, charm: p.charm,
       bed: p.bed, skills: p.skills, spells: p.spells, power: p.power, curse: p.curse, energy: p.energy, mana: p.mana,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
@@ -307,7 +310,7 @@ export class World {
       mode: p.mode, planet: p.planet, parked: p.parked, x: p.x, y: p.y, z: p.z, q: p.q, px: p.px, py: p.py, pz: p.pz,
       tutorial: p.tutorial, tutCount: p.tutCount, home: p.home, kills: p.kills,
       rep: p.rep, favor: p.favor, blessing: p.blessing, buffs: p.buffs, codex: Object.keys(p.codex), war: this.data.war || { empire: 0, rebellion: 0 },
-      standing: p.standing, coins: p.coins, goods: p.goods,
+      standing: p.standing, coins: p.coins, goods: p.goods, guild: p.guild ? { merit: p.guild.merit, done: p.guild.done } : null,
       ...this.powers.view(p),
     };
   }
@@ -359,7 +362,10 @@ export class World {
   on_fire(conn) { this.combat.fire(conn); }
   on_talk_opt(conn, m) { if (typeof m.id === 'string') this.talk.choose(conn, m); }
   on_talk_say(conn, m) { if (typeof m.id === 'string') this.talk.say(conn, m).catch((e) => this.log('talk error', e)); }
-  on_quest_abandon(conn, m) { if (typeof m.id === 'string') this.quests.abandon(conn, m); }
+  on_quest_abandon(conn, m) { if (typeof m.id !== 'string') return; if (conn.player.guild?.contracts.some((c) => c.id === m.id)) this.guild.abandon(conn, m); else this.quests.abandon(conn, m); }
+  on_guild(conn) { this.guild.open(conn); }
+  on_guild_accept(conn, m) { if (typeof m.key === 'string') this.guild.accept(conn, m); }
+  on_guild_turnin(conn, m) { if (typeof m.id === 'string') this.guild.turnIn(conn, m); }
   on_cast(conn, m) { if (typeof m.spell === 'string') this.powers.cast(conn, m); }
   on_power(conn) { this.powers.usePower(conn); }
   on_transform(conn) { this.powers.transform(conn); }
@@ -939,6 +945,7 @@ export class World {
     this.story.tick(now);
     this.politics.tick(now);
     this.quests.tick(now);
+    this.guild.tick(now);
     this.powers.tick(dt, now);
     this.bases.tick(dt, now);
     this.gravityTick(dt, now);
@@ -1021,7 +1028,7 @@ export class World {
           const p = o.player;
           if (o === c || p.mode !== 'space' || p.dead || !c.subs.has(sectorKey(...sectorOf(p.x, p.z)))) continue;
           needShip(p);
-          players.push({ id: o.id, key: p.key, name: p.name, color: p.color, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, q: p.q, thrust: p.thrust, mining: p.mining, hull: p.hull, maxHull: p.stats.hp, rev: p.shipRev });
+          players.push({ id: o.id, key: p.key, name: p.name, color: p.color, x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, q: p.q, thrust: p.thrust, mining: p.mining, hull: p.hull, maxHull: p.stats.hp, rev: p.shipRev, rank: p.guild ? rankOf(p.guild.merit) : null });
         }
         c.send({ t: 'snap', time: now, mode: 'space', players, npcs: this.combat.npcsIn(c.subs, me), ships, online, mining: me.mining });
       } else if (me.mode === 'dungeon') {

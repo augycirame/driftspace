@@ -190,7 +190,7 @@ export class Dungeons {
     if (!e.boss && Math.random() < 0.15 * luck) this.w.giveItem(conn, randomItem(inst.planet.richness + 1));
     if (e.boss) {
       inst.bossDead = true;
-      for (const c of crew) this.w.quests.onEvent(c, 'dungeon', { pid: inst.planet.id, st: inst.stId });
+      for (const c of crew) { this.w.quests.onEvent(c, 'dungeon', { pid: inst.planet.id, st: inst.stId }); this.w.guild.onDungeon(c, inst.planet.id, inst.stId); }
       const name = CREATURES[e.species].name;
       this.toInstance(inst, { t: 'transmission', title: `${name.toUpperCase()} DEFEATED`, lines: [`${name} falls. The deepest chamber of the ${inst.themeDef.name} is open.`] });
       this.toInstance(inst, { t: 'boss', key: inst.key });

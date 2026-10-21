@@ -172,3 +172,14 @@ input:focus { border-color: var(--holo-strong); box-shadow: 0 0 8px rgba(var(--h
 #prompt { color: var(--holo-strong); text-shadow: 0 0 8px rgba(var(--holo), 0.8), 0 1px 3px #000; letter-spacing: 0.05em; }
 #toasts div { color: #e8fbff; text-shadow: 0 0 6px rgba(var(--holo), 0.6); }
 #radar { filter: drop-shadow(0 0 6px rgba(var(--holo), 0.45)); }
+
+/* Mercenary Guild card and rank badges. */
+.guildcard { display: flex; gap: 14px; align-items: center; padding: 12px; margin-bottom: 6px;
+  background: linear-gradient(120deg, rgba(var(--holo), 0.14), rgba(var(--holo), 0.03)); border: 1px solid rgba(var(--holo), 0.35); }
+.guildinfo { flex: 1; }
+.guildinfo .bar { margin-top: 6px; height: 6px; background: #1a2238; overflow: hidden; }
+.guildinfo .bar span { display: block; height: 100%; box-shadow: 0 0 8px currentColor; }
+.rankbadge { width: 58px; height: 58px; display: grid; place-items: center; font: 900 34px/1 system-ui, sans-serif; color: var(--rc);
+  border: 2px solid var(--rc); background: rgba(0, 0, 0, 0.35); text-shadow: 0 0 12px var(--rc); box-shadow: 0 0 16px -4px var(--rc), inset 0 0 14px -6px var(--rc);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
+.rankchip { display: inline-block; min-width: 20px; padding: 0 5px; text-align: center; font-weight: 900; color: var(--rc); border: 1px solid var(--rc); border-radius: 2px; text-shadow: 0 0 6px var(--rc); }

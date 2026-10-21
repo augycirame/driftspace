@@ -293,6 +293,7 @@ function onMessage(m) {
     case 'chest': if (surface.data?.blocks[m.cell]) surface.data.blocks[m.cell].inv = m.inv; if (ui.current?.kind === 'chest') ui.chest(m.cell, m.inv); break;
     case 'quests': S.quests = m.list; ui.refresh(); break;
     case 'politics': ui.politics(m.view); break;
+    case 'guild': ui.guild(m); break;
     case 'story': {
       const hadGate = S.effects?.gateBuilt;
       S.story = m.story;

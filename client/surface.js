@@ -9,6 +9,7 @@ import {
 import { ORES, BLOCKS, SURFACE_GRID } from '/shared/rules.js';
 import { PLAYER_SPEED, RUN_SPEED } from '/shared/items.js';
 import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, buildWerewolf, buildMech, label, healthBar, setHealth, glowSprite } from './meshes.js';
+import { RANKS } from '/shared/guild.js';
 import { townsOf, townFootprints, insideFootprint, sunAt, weatherAt, weatherInfo } from '/shared/towns.js';
 import { buildTown, realmColor } from './towns.js';
 import { gravityOf } from '/shared/planet.js';
@@ -971,7 +972,7 @@ export class SurfaceView {
       if (!v || v.armorKey !== armorKey) {
         if (v) this.root.remove(v.group);
         const group = this.formMesh(o.color, o.armor, o.wolf, o.mech, o.weapon);
-        const lb = label(o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color, 0.8);
+        const lb = label((o.rank != null ? `[${RANKS[o.rank].id}] ` : '') + o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color, 0.8);
         lb.position.y = o.mech ? 5.4 : o.wolf ? 3 : 2.5;
         group.add(lb);
         const bar = healthBar(0.04);
@@ -1040,7 +1041,12 @@ export class SurfaceView {
         const bar = healthBar(0.035);
         bar.position.y = c.size * tall + 0.6;
         group.add(bar);
-        if (def.faction || def.behavior === 'guardian' || def.race) {
+        if (c.title) {
+          // A wanted outlaw from a guild contract: named, in red.
+          const lb = label(`☠ ${c.title}`, '#ff5a4a', 0.95);
+          lb.position.y = c.size * tall + 1.3;
+          group.add(lb);
+        } else if (def.faction || def.behavior === 'guardian' || def.race) {
           const lb = label(def.name, def.faction === 'empire' ? '#ffe08a' : def.faction === 'rebellion' ? '#ff9a7a' : def.race ? ALIEN_RACES[def.race].color : '#d9a8ff', 0.7);
           lb.position.y = c.size * tall + 1.2;
           group.add(lb);
@@ -1167,6 +1173,11 @@ export class SurfaceView {
       if (d < bd) { bd = d; bestN = c; }
     }
     if (bestN) return { what: 'npc', id: bestN.id, text: `E: talk to ${this.creatures.get(bestN.id)?.name || bestN.n?.name || 'them'}` };
+    for (const t of this.towns || []) {
+      if (!near(t.x, t.z, t.radius + 10)) continue;
+      const hall = t.buildings.find((b) => b.kind === 'guild');
+      if (hall && near(hall.x, hall.z, Math.max(hall.w, hall.d) / 2 + 6)) return { what: 'guild', text: 'E: Mercenary Guild contract board' };
+    }
     for (const m of this.blocks?.children || []) {
       const t = m.userData.block;
       if (t !== 'chest' && t !== 'bench') continue;

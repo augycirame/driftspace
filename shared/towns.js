@@ -278,6 +278,11 @@ function layoutCity(town, rng, style) {
       add({ kind: 'lamp', x, z, w: 0.5, d: 0.5, h: 4, rot: 0 });
     }
   }
+  // Every city has a Mercenary Guild hall: if none drew a lot, the innermost house becomes one.
+  if (!b.some((x) => x.kind === 'guild')) {
+    const homes = b.filter((x) => x.kind === 'rowhouse').sort((p, q) => Math.hypot(p.x - town.x, p.z - town.z) - Math.hypot(q.x - town.x, q.z - town.z));
+    if (homes[0]) Object.assign(homes[0], { kind: 'guild', h: 10 });
+  }
   town.buildings = b;
   // A stone wall with three gates on the avenues.
   town.walls = [];

@@ -348,6 +348,7 @@ export class Combat {
     if (KILL_REP[n.kind]) this.w.changeRep(conn, KILL_REP[n.kind]);
     if (n.race) this.w.discover(conn, [`race:${n.race}`]);
     killer.kills = (killer.kills || 0) + 1;
+    this.w.guild.onShipKill(conn, n.race ? 'alien' : n.kind);
     this.w.powers.gain(conn, 'piloting', 6);
     if (n.kind === 'hollow') this.w.story.add('kill:hollow', 1, killer.name);
   }

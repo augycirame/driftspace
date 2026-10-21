@@ -17,6 +17,7 @@ import { townsOf, weatherAt, weatherInfo } from '../shared/towns.js';
 import { blockAllowed } from '../shared/rules.js';
 import { floraFor } from '../shared/planet.js';
 import { skillBonus } from '../shared/powers.js';
+import { rankOf } from '../shared/guild.js';
 import { Natives } from './natives.js';
 import { mechStats } from '../shared/powers.js';
 
@@ -317,6 +318,7 @@ export class Surfaces {
     inst.creatures.delete(c.id);
     this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
     this.w.quests.onKill(conn, inst.planet.id, c);
+    this.w.guild.onKill(conn, inst.planet.id, c);
     this.w.director?.record('kills');
     this.w.powers.gain(conn, 'combat', Math.max(2, Math.round(c.maxHp / 25)));
     if (c.behavior === 'native') {
@@ -496,6 +498,7 @@ export class Surfaces {
       return this.w.tutorial(conn, 'warden');
     }
     if (what === 'structure') return this.useStructure(conn, inst, id);
+    if (what === 'guild') return this.w.guild.open(conn);
     if (what === 'npc') {
       const c = inst.creatures.get(id);
       if (!c || c.behavior !== 'native' || !near(c.x, c.z, 6)) return;
@@ -762,11 +765,12 @@ export class Surfaces {
       if (p.parked?.planet === me.planet) parked.push({ name: p.name, key: p.key, x: p.parked.x, z: p.parked.z, rev: p.shipRev });
       if (oc === conn || p.mode !== 'surface' || p.planet !== me.planet) continue;
       const w = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
-      players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0, wolf: !!p.wolf, mech: p.inMech ? this.w.powers.mechItem(p)?.tier || 1 : 0 });
+      players.push({ id: oc.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, weapon: w?.type || null, armor: p.armor?.armor || 0, wolf: !!p.wolf, mech: p.inMech ? this.w.powers.mechItem(p)?.tier || 1 : 0, rank: p.guild ? rankOf(p.guild.merit) : null });
     }
     conn.seenNatives ||= new Set();
     const creatures = inst ? [...inst.creatures.values()].map((c) => {
       const o = { id: c.id, sp: c.species, x: c.x, y: c.y, z: c.z, yaw: c.yaw, hp: c.hp, maxHp: c.maxHp, size: c.size, hostile: this.aggroRange(c, me) > 0 };
+      if (c.title) o.title = c.title;
       if (c.behavior === 'native') {
         if (!conn.seenNatives.has(c.id)) { conn.seenNatives.add(c.id); o.n = this.natives.describe(c); }
         if (this.natives.wolf(inst, c)) o.wolf = 1;

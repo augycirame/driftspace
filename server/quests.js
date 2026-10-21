@@ -481,7 +481,7 @@ export class Quests {
 
   // Quests as the client shows them (journal, HUD, markers).
   view(p) {
-    return (p.quests || []).filter((q) => q.status === 'active' || q.status === 'changed').map((q) => {
+    const own = (p.quests || []).filter((q) => q.status === 'active' || q.status === 'changed').map((q) => {
       const planet = this.w.surfaces.instance(q.pid)?.planet;
       const s = q.steps[q.step];
       let mark = null;
@@ -489,6 +489,7 @@ export class Quests {
       else if (s?.to && planet) { const t = townsOf(planet).find((x) => x.id === s.to); if (t) mark = [t.x, t.z]; }
       return { id: q.id, title: q.title, pid: q.pid, planet: planet?.name, town: q.townName, giver: q.giver?.name, steps: q.steps.map((x) => ({ text: x.text, done: !!x.done, have: x.have, need: x.need })), step: q.step, note: q.note || null, status: q.status, mark };
     });
+    return [...own, ...(this.w.guild?.view(p) || [])];
   }
 
   sync(conn) {

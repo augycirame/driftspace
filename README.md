@@ -185,6 +185,19 @@ around you for double damage. **Q** is **Vorpal Strike**, a lunge that runs you 
 everything in a line (every 5 seconds). Swords work in dungeons too. Every hit throws sparks
 and a damage number; spells open a magic circle under the caster.
 
+## The Mercenary Guild
+
+Every city has a **guild hall** (walk up and press E) and every station a guild terminal (in the
+station menu). The contract board posts new work every hour: hunts, **wanted** outlaws (named,
+monstrous creatures that turn up when you near their lair), dungeon clearances, ore supply runs and
+space bounties on pirate, Hollow and alien ships. Hold up to three contracts; they show in your
+journal and HUD, and finished ones are turned in at any guild board for credits and **merit**.
+
+Merit raises your guild rank from **F** to **S** (Novice, Hired blade, Sellsword, Veteran, Elite,
+Ace, Legend). You can take work up to one rank above your own, C-rank contracts and up also pay
+out gear, and every promotion is announced to the galaxy. Other pilots see your rank next to your
+name. Dropping a contract costs a little merit.
+
 ## Item grades and enhancement
 
 Weapons and armor come in five grades: **common**, **rare** (blue), **epic** (purple), **unique**
@@ -322,6 +335,7 @@ planet), `/town [i]`, `/pos <x> <z>`, `/war`, `/event famine|plague|festival|rai
 | `shared/towns.js`, `server/politics.js`, `server/natives.js` | Towns, realms and people are generated from the seed; what happens to them afterwards (wars, deaths, coups, markets) is simulated and saved per visited world. |
 | `server/talk.js`, `server/quests.js`, `server/ai.js` | Conversations, markets and quests; Claude voices townsfolk with structured, role-limited replies. |
 | `server/powers.js`, `server/bases.js`, `server/director.js` | Skills, magic, powers, curses and mechs; bases, stations and crafting; the AI director. |
+| `server/guild.js`, `shared/guild.js` | The Mercenary Guild: contract boards, ranks and merit, wanted outlaws. |
 | Interest management | In space, each client subscribes to the 3×3 sectors around it. On a planet, it hears only that planet. |
 | Movement | Clients simulate their own ship or pilot so controls feel instant (`shared/rules.js`). The server checks plausibility and snaps cheaters back. |
 | Client | Three.js (served from `node_modules`, no CDN). `client/space.js` and `client/surface.js` are the two scenes. `client/shipyard.js` is the 3D block editor. |

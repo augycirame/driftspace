@@ -1,6 +1,7 @@
 // The 3D space scene: nearby sectors, stars and planets, asteroids, stations, other pilots,
 // NPC ships, structures, and the chase camera for your own ship.
 
+import { RANKS } from '/shared/guild.js';
 import * as THREE from 'three';
 import { generateSector, sectorOf, sectorKey, planetPos, effectiveOre, FAR_REACH } from '/shared/universe.js';
 import { ORES, BLOCKS, WORLD_GRID, DOCK_RANGE, LAND_MARGIN, stepShip, gravityAt, DOCK_PORT_RANGE } from '/shared/rules.js';
@@ -510,7 +511,7 @@ export class SpaceView {
         if (v) this.scene.remove(v.group);
         if (!ship) continue;
         const group = buildShip(ship, o.color);
-        const lb = label(o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color);
+        const lb = label((o.rank != null ? `[${RANKS[o.rank].id}] ` : '') + o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color);
         lb.position.y = 22;
         group.add(lb);
         const bar = healthBar();

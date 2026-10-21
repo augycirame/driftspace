@@ -4,6 +4,7 @@
 import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
 import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford, blockAllowed } from '/shared/rules.js';
 import { RECIPES, RECIPE_IDS, recipeCost } from '/shared/crafting.js';
+import { RANKS, MAX_CONTRACTS } from '/shared/guild.js';
 import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, WEAPON_IDS, GRADES, AFFIXES, MAX_PLUS, ENHANCE_CHANCE, enhanceCost, itemName, itemColor, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
 import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle, ALIEN_RACES, DUNGEON_THEMES } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
@@ -14,6 +15,13 @@ import { climateOf, sunAt, weatherAt, weatherInfo, townsOf } from '/shared/towns
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// A guild contract as a line on the board.
+function contractHtml(c) {
+  const r = RANKS[c.rank];
+  return `<span class="rankchip" style="--rc:${r.color}">${r.id}</span> <b>${esc(c.title)}</b><br><span class="small">${esc(c.text)}</span>` +
+    `<br><span class="small dim">${c.credits} cr · ${c.merit} merit${c.planet ? ` · ${esc(c.planet)}` : ''}</span>`;
+}
 
 // An item's grade, bonus stats and maker, as small lines under its name.
 function gradeLines(it) {
@@ -158,6 +166,7 @@ export class UI {
       body.appendChild(this.row('Gear shop<br><span class="small dim">Weapons and armor</span>', this.button('Browse', () => this.send({ t: 'shop' }))));
       body.appendChild(this.row('Shipyard<br><span class="small dim">Rebuild your ship block by block</span>', this.button('Open', () => { this.close(); this.onShipyard?.(); })));
       body.appendChild(this.row('Fabricator<br><span class="small dim">Craft gear and mechs from materials</span>', this.button('Craft', () => this.craft())));
+      body.appendChild(this.row('Mercenary Guild<br><span class="small dim">Contracts, bounties and your guild rank</span>', this.button('Board', () => this.send({ t: 'guild' }))));
       if (docked.station.player) body.appendChild(Object.assign(document.createElement('p'), { className: 'small dim', textContent: `A station built by ${docked.station.owner}. Repairs are free; ore sells at 80%.` }));
       if (docked.station.capital) {
         const b = HOLY_CAPITAL.blessing;
@@ -277,6 +286,44 @@ export class UI {
     });
   }
 
+  // The Mercenary Guild's contract board, with your guild card on top.
+  guild(m) {
+    this.guildView = m;
+    const render = (body) => {
+      const g = this.guildView, r = RANKS[g.rank], next = RANKS[g.rank + 1];
+      const card = document.createElement('div');
+      card.className = 'guildcard';
+      const pct = next ? Math.round(100 * (g.merit - r.merit) / (next.merit - r.merit)) : 100;
+      card.innerHTML = `<div class="rankbadge" style="--rc:${r.color}">${r.id}</div><div class="guildinfo"><b>${esc(this.S.you.name)}</b> <span class="dim small">· ${r.title} · ${g.done} contracts</span>` +
+        `<div class="small">${g.merit} merit${next ? ` · ${next.merit - g.merit} to ${next.id}-rank` : ' · the highest rank'}</div><div class="bar"><span style="width:${pct}%;background:${r.color}"></span></div></div>`;
+      body.appendChild(card);
+      const h1 = document.createElement('h3');
+      h1.textContent = `Your contracts (${g.active.length}/${MAX_CONTRACTS})`;
+      body.appendChild(h1);
+      if (!g.active.length) body.appendChild(Object.assign(document.createElement('p'), { className: 'small dim', textContent: 'None. Take one from the board below.' }));
+      for (const c of g.active) {
+        const wrap = document.createElement('span');
+        const tb = this.button(c.ready || c.kind === 'deliver' ? 'Turn in' : `${c.have}/${c.need}`, () => this.send({ t: 'guild_turnin', id: c.id }), c.ready ? '' : 'alt');
+        tb.disabled = !c.ready && c.kind !== 'deliver';
+        wrap.appendChild(tb);
+        wrap.appendChild(this.button('Drop', () => { if (confirm(`Drop ${c.title}? The guild will dock some merit.`)) this.send({ t: 'quest_abandon', id: c.id }); }, 'alt'));
+        body.appendChild(this.row(contractHtml(c) + (c.ready ? ' <span class="good small">✓ done</span>' : ''), wrap));
+      }
+      const h2 = document.createElement('h3');
+      h2.textContent = 'Contract board';
+      body.appendChild(h2);
+      body.appendChild(Object.assign(document.createElement('p'), { className: 'small dim', textContent: 'New contracts are posted every hour. You can take work up to one rank above your own.' }));
+      for (const c of g.board) {
+        const b = this.button(c.taken ? 'Taken' : c.locked ? `Needs ${RANKS[c.rank - 1].id}` : 'Accept', () => this.send({ t: 'guild_accept', key: c.key }), c.taken || c.locked ? 'alt' : '');
+        b.disabled = c.taken || c.locked || g.active.length >= MAX_CONTRACTS;
+        const row = this.row(contractHtml(c), b);
+        if (c.locked) row.style.opacity = 0.55;
+        body.appendChild(row);
+      }
+    };
+    if (this.current?.kind === 'guild' && this.isOpen()) { this.current.render = render; this.rerender(); } else this.open('guild', m.name, render);
+  }
+
   journal() {
     this.open('journal', 'Journal', (body) => {
       // Quests from the people of the worlds.
@@ -288,7 +335,7 @@ export class UI {
         for (const q of qs) {
           const el = document.createElement('div');
           el.className = 'goal';
-          el.innerHTML = `<b style="color:#f0d8a0">${esc(q.title)}</b> <span class="small dim">· ${esc(q.giver || '')} of ${esc(q.town || '')}, ${esc(q.planet || '')}</span>` +
+          el.innerHTML = `<b style="color:${q.guild ? '#8fe6ff' : '#f0d8a0'}">${esc(q.title)}</b> <span class="small dim">· ${q.guild ? `Mercenary Guild${q.planet ? ', ' + esc(q.planet) : ''}` : `${esc(q.giver || '')} of ${esc(q.town || '')}, ${esc(q.planet || '')}`}</span>` +
             (q.note ? `<div class="small" style="color:#ffe08a">${esc(q.note)}</div>` : '') +
             q.steps.map((s, i) => `<div class="small${i > q.step ? ' dim' : ''}">${s.done ? '<span class="good">✓</span>' : i === q.step ? '▸' : '○'} ${esc(s.text)}${s.need && i === q.step && s.have != null && s.type !== 'bring' ? ` (${s.have}/${s.need})` : ''}</div>`).join('');
           el.appendChild(this.button('Abandon', () => this.send({ t: 'quest_abandon', id: q.id }), 'alt small'));
@@ -722,7 +769,7 @@ export class UI {
         <tr><td>B</td><td>Build structures (left place, right remove, 1-6 block)</td></tr></table>
         <h3>On foot</h3><table>
         <tr><td>WASD / Shift</td><td>Walk / run</td></tr><tr><td>Space</td><td>Jump</td></tr>
-        <tr><td>Left mouse</td><td>Shoot, or swing a sword (every third swing in a row is a sword skill)</td></tr><tr><td>Q</td><td>Vorpal Strike (with a sword)</td></tr><tr><td>Right mouse</td><td>Dig (Shift+right raises ground)</td></tr>
+        <tr><td>Left mouse</td><td>Shoot, or swing a sword (every third swing in a row is a sword skill)</td></tr><tr><td>Q</td><td>Vorpal Strike (with a sword)</td></tr><tr><td>E at a guild hall</td><td>Mercenary Guild contract board</td></tr><tr><td>Right mouse</td><td>Dig (Shift+right raises ground)</td></tr>
         <tr><td>E</td><td>Interact / board your ship</td></tr><tr><td>Y</td><td>Shipyard (next to your ship)</td></tr>
         <tr><td>B</td><td>Build blocks</td></tr><tr><td>V</td><td>First / third person</td></tr></table>
         <h3>Anywhere</h3><table>
