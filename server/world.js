@@ -360,6 +360,7 @@ export class World {
   on_interact(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.interact(conn, m) : this.surfaces.interact(conn, m); }
   on_land(conn, { planet }) { if (typeof planet === 'string') this.surfaces.land(conn, planet); }
   on_fire(conn) { this.combat.fire(conn); }
+  on_missile(conn, m) { this.combat.fireMissiles(conn, m); }
   on_talk_opt(conn, m) { if (typeof m.id === 'string') this.talk.choose(conn, m); }
   on_talk_say(conn, m) { if (typeof m.id === 'string') this.talk.say(conn, m).catch((e) => this.log('talk error', e)); }
   on_quest_abandon(conn, m) { if (typeof m.id !== 'string') return; if (conn.player.guild?.contracts.some((c) => c.id === m.id)) this.guild.abandon(conn, m); else this.quests.abandon(conn, m); }

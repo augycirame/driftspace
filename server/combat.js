@@ -10,6 +10,7 @@ import { ALIEN_RACES } from '../shared/content/aliens.js';
 const BOLT_SPEED = 1500;
 const BOLT_LIFE = 1.3;
 const MAX_NPCS = 220;
+const MISSILE_SPEED = 700, MISSILE_TOP = 1500, MISSILE_TURN = 2.6, MISSILE_LIFE = 7;
 
 export const NPC_KINDS = {
   pirate:     { name: 'Pirate',          hp: 80,  dmg: 4,  speed: 360, radius: 14, interval: 1.1, bounty: 40,  color: '#ff5a4a' },
@@ -46,6 +47,7 @@ export class Combat {
     this.w = world;
     this.npcs = new Map();
     this.bolts = [];
+    this.missiles = [];
     this.pendingBolts = [];
     this.lastSpawn = 0;
   }
@@ -70,6 +72,78 @@ export class Combat {
         dmg: st.gunDamage, color: '#ffd36a',
       });
     }
+  }
+
+  // A salvo of homing missiles at a locked target: an NPC ship, or a pilot where PvP is allowed.
+  fireMissiles(conn, { target }) {
+    const p = conn.player;
+    if (p.mode !== 'space' || p.dead || typeof target !== 'string') return;
+    const st = p.stats, now = Date.now();
+    if (!st.missiles) return conn.send({ t: 'toast', msg: 'No missile racks. Add some in the shipyard (Y).' });
+    if (now - (p.lastMissile || 0) < st.missileInterval * 1000 * 0.9) return;
+    const tgt = this.targetOf(target);
+    if (!tgt || (tgt.conn && !this.pvpAllowed(p, tgt.conn.player))) return;
+    const [tx, ty, tz] = tgt.pos;
+    const d = Math.hypot(tx - p.x, ty - p.y, tz - p.z);
+    if (d > st.lockRange * 1.15) return conn.send({ t: 'toast', msg: 'Target out of missile range.' });
+    p.lastMissile = now;
+    const f = forwardOf(p.q);
+    let n = 0;
+    for (const [x, y, z, t] of p.ship) {
+      if (t !== 'missile' || n >= st.salvo) continue;
+      const [ox, oy, oz] = qRotate(p.q, [x * SHIP_BLOCK, y * SHIP_BLOCK, (z - 1) * SHIP_BLOCK]);
+      // Each missile kicks out a little to the side before it turns toward the target.
+      const side = (n % 2 ? 1 : -1) * 0.35, up = n >= 2 ? 0.25 : -0.1;
+      const r = qRotate(p.q, [side, up, 0]);
+      const m = {
+        id: nextId++, owner: 'p:' + conn.id, ownerKey: p.key, target, x: p.x + ox, y: p.y + oy, z: p.z + oz,
+        vx: (f[0] + r[0]) * MISSILE_SPEED + p.vx, vy: (f[1] + r[1]) * MISSILE_SPEED + p.vy, vz: (f[2] + r[2]) * MISSILE_SPEED + p.vz,
+        dmg: st.missileDamage, life: MISSILE_LIFE,
+      };
+      this.missiles.push(m);
+      this.w.toNear(m.x, m.z, { t: 'missile', id: m.id, x: m.x, y: m.y, z: m.z, vx: m.vx, vy: m.vy, vz: m.vz, target });
+      n++;
+    }
+  }
+
+  // Where a missile's target is now: an NPC (by id) or a pilot (by connection id).
+  targetOf(id) {
+    const n = this.npcs.get(id);
+    if (n) return { npc: n, pos: [n.x, n.y, n.z], r: n.radius };
+    const c = id.startsWith('p:') ? this.w.connById(id.slice(2)) : null;
+    if (c && c.player.mode === 'space' && !c.player.dead) return { conn: c, pos: [c.player.x, c.player.y, c.player.z], r: c.player.stats.radius };
+    return null;
+  }
+
+  missileTick(dt) {
+    for (const m of this.missiles) {
+      m.life -= dt;
+      const tgt = this.targetOf(m.target);
+      const sp = Math.hypot(m.vx, m.vy, m.vz) || 1;
+      const speed = Math.min(MISSILE_TOP, sp + 900 * dt);
+      let dir = [m.vx / sp, m.vy / sp, m.vz / sp];
+      if (tgt) {
+        const [tx, ty, tz] = tgt.pos, dx = tx - m.x, dy = ty - m.y, dz = tz - m.z, dl = Math.hypot(dx, dy, dz) || 1;
+        if (dl < tgt.r + speed * dt) {
+          m.life = 0;
+          const at = { x: tx - dx / dl * tgt.r * 0.5, y: ty - dy / dl * tgt.r * 0.5, z: tz - dz / dl * tgt.r * 0.5 };
+          this.w.toNear(at.x, at.z, { t: 'boom', x: at.x, y: at.y, z: at.z, size: 10 });
+          if (tgt.npc) this.damageNpc(tgt.npc, m.dmg, m.owner, at);
+          else this.damagePlayerShip(tgt.conn, m.dmg, m, at);
+          continue;
+        }
+        // Turn toward the target, limited by the missile's turn rate.
+        const want = [dx / dl, dy / dl, dz / dl];
+        const k = Math.min(1, MISSILE_TURN * dt);
+        dir = [dir[0] + (want[0] - dir[0]) * k, dir[1] + (want[1] - dir[1]) * k, dir[2] + (want[2] - dir[2]) * k];
+        const l = Math.hypot(...dir) || 1;
+        dir = [dir[0] / l, dir[1] / l, dir[2] / l];
+      }
+      m.vx = dir[0] * speed; m.vy = dir[1] * speed; m.vz = dir[2] * speed;
+      m.x += m.vx * dt; m.y += m.vy * dt; m.z += m.vz * dt;
+      if (m.life <= 0) this.w.toNear(m.x, m.z, { t: 'boom', x: m.x, y: m.y, z: m.z, size: 6 });
+    }
+    this.missiles = this.missiles.filter((m) => m.life > 0);
   }
 
   spawnBolt(b) {
@@ -402,6 +476,7 @@ export class Combat {
     this.spawnTick(now);
     this.npcTick(dt, now);
     this.boltTick(dt);
+    this.missileTick(dt);
     this.regenTick(dt, now);
     if (this.pendingBolts.length) {
       const bySector = new Map();

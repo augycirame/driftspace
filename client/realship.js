@@ -295,6 +295,16 @@ export function buildRealShip(blocks, tint = '#9fd0ff') {
       // The glowing combustion chamber.
       add('glow', new THREE.CircleGeometry(S * 0.2, 24), x, y, z + S * 0.4, 0, 0, 0);
       for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; add('metal', new THREE.CylinderGeometry(S * 0.018, S * 0.018, S * 0.5, 6), x + Math.cos(a) * S * 0.44, y + Math.sin(a) * S * 0.44, z, Math.PI / 2, 0, 0); }
+    } else if (t === 'missile') {
+      // A launcher pod: a block with a 2x2 grid of tubes, warheads peeking out of the front.
+      add('paint', box(S * 0.9, S * 0.8, S * 0.95, 0.1), x, y, z, 0, 0, 0, paint);
+      add('dark', box(S * 0.8, S * 0.7, S * 0.06, 0.2), x, y, z - S * 0.49);
+      for (const [mx, my] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const tx = x + mx * S * 0.2, ty = y + my * S * 0.17;
+        add('metal', new THREE.CylinderGeometry(S * 0.14, S * 0.14, S * 0.12, 16), tx, ty, z - S * 0.5, Math.PI / 2, 0, 0);
+        add('red', new THREE.ConeGeometry(S * 0.09, S * 0.2, 14), tx, ty, z - S * 0.62, -Math.PI / 2, 0, 0);
+      }
+      greeble(1);
     } else if (t === 'gun') {
       add('dark', box(S * 0.62, S * 0.5, S * 0.8, 0.12), x, y, z);
       add('paint', box(S * 0.64, S * 0.1, S * 0.5, 0.3), x, y + S * 0.26, z, 0, 0, 0, paint);

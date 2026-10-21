@@ -63,7 +63,7 @@ export const BLOCK_IDS = Object.keys(BLOCKS);
 // ---- ships are built from blocks; their stats come from what they're made of ------------------
 
 export const SHIP_BLOCK = 4;     // world units per ship block
-export const SHIP_MAX_BLOCKS = 64;
+export const SHIP_MAX_BLOCKS = 96;
 export const SHIP_BOUNDS = { x: 4, y: 3, z: 6 };
 
 export const SHIP_PARTS = {
@@ -75,6 +75,7 @@ export const SHIP_PARTS = {
   gun:      { name: 'Blaster',          color: '#d14b4b', mass: 1, hp: 20, gun: 1, cost: { iron: 4, gold: 2 } },
   shield:   { name: 'Shield generator', color: '#4bb8d1', mass: 2, hp: 20, shield: 70, cost: { copper: 4, gold: 2, ice: 2 } },
   wing:     { name: 'Wing',             color: '#7d8da3', mass: 0.5, hp: 15, turn: 0.08, cost: { iron: 2, ice: 1 } },
+  missile:  { name: 'Missile rack',     color: '#c8c0a8', mass: 1.5, hp: 25, missile: 1, cost: { iron: 6, copper: 2, gold: 3 } },
 };
 export const SHIP_PART_IDS = Object.keys(SHIP_PARTS);
 
@@ -91,13 +92,20 @@ export const UPGRADES = {
 };
 export const upgradeCost = (level) => Math.round(150 * Math.pow(2.1, level));
 
+// Ship classes by size, from a nimble interceptor to a battleship.
+export const SHIP_CLASSES = [
+  { name: 'Interceptor', max: 10 }, { name: 'Fighter', max: 18 }, { name: 'Corvette', max: 28 }, { name: 'Frigate', max: 42 },
+  { name: 'Destroyer', max: 58 }, { name: 'Cruiser', max: 76 }, { name: 'Battleship', max: Infinity },
+];
+export const shipClass = (blocks) => SHIP_CLASSES.findIndex((c) => blocks.length <= c.max);
+
 export function shipStats(blocks, upg = {}, effects = {}, buffs = {}) {
-  let mass = 0, thrust = 0, hp = 0, shield = 0, cargo = 30, guns = 0, turn = 0, ext = 1;
+  let mass = 0, thrust = 0, hp = 0, shield = 0, cargo = 30, guns = 0, turn = 0, ext = 1, missiles = 0;
   for (const [x, y, z, t] of blocks) {
     const p = SHIP_PARTS[t];
     if (!p) continue;
     mass += p.mass; hp += p.hp;
-    thrust += p.thrust || 0; shield += p.shield || 0; cargo += p.cargo || 0; guns += p.gun || 0; turn += p.turn || 0;
+    thrust += p.thrust || 0; shield += p.shield || 0; cargo += p.cargo || 0; guns += p.gun || 0; turn += p.turn || 0; missiles += p.missile || 0;
     ext = Math.max(ext, Math.abs(x) + 1, Math.abs(y) + 1, Math.abs(z) + 1);
   }
   mass = Math.max(1, mass);
@@ -105,13 +113,18 @@ export function shipStats(blocks, upg = {}, effects = {}, buffs = {}) {
   const l = upg.laser || 0, j = upg.jump || 0, g = upg.guns || 0;
   const spd = 1 + (buffs.speed || 0);
   return {
-    mass, hp, shield, cargo, guns,
+    mass, hp, shield, cargo, guns, missiles, cls: shipClass(blocks),
     accel: tw * 5.5 * spd,
     maxSpeed: (220 + 420 * Math.min(1.4, tw / 90)) * spd,
     turnRate: (1.9 + turn * 4) / (1 + mass / 45),
     shieldRegen: shield * 0.12,
     gunDamage: 10 * (1 + 0.25 * g) * (1 + (buffs.damage || 0)),
     gunInterval: 0.28,
+    // Missiles home in on a locked target; more racks fire bigger salvos.
+    missileDamage: 34 * (1 + 0.25 * g) * (1 + (buffs.damage || 0)),
+    missileInterval: 3.5,
+    salvo: Math.min(4, missiles),
+    lockRange: 2600,
     mineRate: 9 * (1 + 0.45 * l) * (1 + (buffs.mining || 0)),
     mineRange: 340 + 45 * l,
     jumpRange: 2 + j * 2 + (effects.jumpBonus || 0) + (buffs.jump || 0),

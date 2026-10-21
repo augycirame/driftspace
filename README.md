@@ -177,6 +177,13 @@ and a boss in the deepest room guarding a treasure vault (which usually holds a 
 party enters the same copy of the dungeon together. Difficulty grows the farther the planet is
 from Haven, and a dungeon resets a couple of minutes after everyone has left.
 
+## Ship classes and missiles
+
+Your ship's class follows its size: **Interceptor**, Fighter, Corvette, Frigate, Destroyer, Cruiser
+and, at up to 96 blocks, **Battleship**. **Missile racks** (iron, copper, gold) fire homing missiles:
+press **T** to lock the target nearest your crosshair (again to cycle), then **F** to fire a salvo of
+up to four. Missiles hit hard but reload slowly, and pilots get a warning when one is coming at them.
+
 ## Swords
 
 Energy blades and greatswords swing in an arc in front of you (left mouse). Swing three times in

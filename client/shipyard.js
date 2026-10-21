@@ -2,7 +2,7 @@
 // right-click to remove, drag to orbit. Saving charges (or refunds) the ore difference.
 
 import * as THREE from 'three';
-import { SHIP_PARTS, SHIP_PART_IDS, SHIP_BLOCK, SHIP_BOUNDS, SHIP_MAX_BLOCKS, ORES, shipStats, validateShip } from '/shared/rules.js';
+import { SHIP_PARTS, SHIP_PART_IDS, SHIP_BLOCK, SHIP_BOUNDS, SHIP_MAX_BLOCKS, SHIP_CLASSES, ORES, shipStats, validateShip } from '/shared/rules.js';
 import { buildShip } from './meshes.js';
 
 const $ = (id) => document.getElementById(id);
@@ -129,7 +129,7 @@ export class Shipyard {
       const el = document.createElement('button');
       el.className = 'part' + (id === this.part ? ' sel' : '');
       const cost = Object.entries(d.cost).map(([k, v]) => `${v} ${ORES[k].name}`).join(', ');
-      const what = d.thrust ? `+${d.thrust} thrust` : d.cargo ? `+${d.cargo} cargo` : d.gun ? 'fires bolts' : d.shield ? `+${d.shield} shield` : d.turn ? 'better turning' : `${d.hp} hull`;
+      const what = d.thrust ? `+${d.thrust} thrust` : d.cargo ? `+${d.cargo} cargo` : d.gun ? 'fires bolts' : d.missile ? 'homing missiles (T lock, F fire)' : d.shield ? `+${d.shield} shield` : d.turn ? 'better turning' : `${d.hp} hull`;
       el.innerHTML = `<i style="background:${d.color}"></i><b>${d.name}</b><span>${what} · mass ${d.mass}</span><span class="dim">${cost}</span>`;
       el.onclick = () => { this.part = id; this.renderPanel(); };
       pal.appendChild(el);
@@ -145,10 +145,11 @@ export class Shipyard {
     const costTxt = Object.entries(need).filter(([, v]) => v !== 0).map(([k, v]) => `${v > 0 ? '−' : '+'}${Math.abs(v)} ${ORES[k].name}`).join(', ') || 'no change';
     $('yard-info').innerHTML =
       `<table><tr><th></th><th>Now</th><th>New</th></tr>` +
+      `<tr><td>Class</td><td>${SHIP_CLASSES[cur.cls].name}</td><td>${SHIP_CLASSES[st.cls].name}</td></tr>` +
       row('Blocks', this.S.you.ship.length, this.draft.length) +
       row('Hull', cur.hp, st.hp) + row('Shield', cur.shield, st.shield) + row('Top speed', cur.maxSpeed, st.maxSpeed) +
       row('Acceleration', cur.accel, st.accel) + row('Turning', cur.turnRate * 100, st.turnRate * 100) +
-      row('Cargo', cur.cargo, st.cargo) + row('Guns', cur.guns, st.guns) + `</table>` +
+      row('Cargo', cur.cargo, st.cargo) + row('Guns', cur.guns, st.guns) + row('Missile racks', cur.missiles, st.missiles) + `</table>` +
       `<p>Cost: ${costTxt}</p>` +
       (err ? `<p class="error">${err}</p>` : '') +
       (short.length ? `<p class="error">Not enough ${short.map(([k]) => ORES[k].name).join(', ')} in your hold.</p>` : '') +

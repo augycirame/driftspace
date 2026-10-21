@@ -2,7 +2,7 @@
 // story transmissions, toasts and chat.
 
 import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
-import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford, blockAllowed } from '/shared/rules.js';
+import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, SHIP_CLASSES, upgradeCost, cargoTotal, canAfford, blockAllowed } from '/shared/rules.js';
 import { RECIPES, RECIPE_IDS, recipeCost } from '/shared/crafting.js';
 import { RANKS, MAX_CONTRACTS } from '/shared/guild.js';
 import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, WEAPON_IDS, GRADES, AFFIXES, MAX_PLUS, ENHANCE_CHANCE, enhanceCost, itemName, itemColor, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
@@ -253,7 +253,7 @@ export class UI {
       h2.textContent = 'Ship';
       body.appendChild(h2);
       const t = document.createElement('div');
-      t.innerHTML = `<table><tr><td>Blocks</td><td>${you.ship.length}</td></tr><tr><td>Hull / shield</td><td>${st.hp} / ${st.shield}</td></tr><tr><td>Top speed</td><td>${Math.round(st.maxSpeed)}</td></tr><tr><td>Guns</td><td>${st.guns} × ${Math.round(st.gunDamage)} dmg</td></tr><tr><td>Cargo</td><td>${st.cargo}</td></tr><tr><td>Jump range</td><td>${st.jumpRange} sectors</td></tr><tr><td>Kills</td><td>${you.kills || 0}</td></tr></table>`;
+      t.innerHTML = `<table><tr><td>Class</td><td>${SHIP_CLASSES[st.cls]?.name || ''}</td></tr><tr><td>Blocks</td><td>${you.ship.length}</td></tr><tr><td>Hull / shield</td><td>${st.hp} / ${st.shield}</td></tr><tr><td>Top speed</td><td>${Math.round(st.maxSpeed)}</td></tr><tr><td>Guns</td><td>${st.guns} × ${Math.round(st.gunDamage)} dmg</td></tr>${st.missiles ? `<tr><td>Missiles</td><td>${st.salvo} per salvo × ${Math.round(st.missileDamage)} dmg</td></tr>` : ''}<tr><td>Cargo</td><td>${st.cargo}</td></tr><tr><td>Jump range</td><td>${st.jumpRange} sectors</td></tr><tr><td>Kills</td><td>${you.kills || 0}</td></tr></table>`;
       body.appendChild(t);
     });
   }
@@ -764,7 +764,7 @@ export class UI {
         <tr><td>Space / C</td><td>Rise / sink</td></tr><tr><td>Q / E</td><td>Roll (E docks when near a station)</td></tr>
         <tr><td>X</td><td>Brake</td></tr><tr><td>Left mouse</td><td>Fire blasters</td></tr>
         <tr><td>Right mouse (hold)</td><td>Mine the asteroid you're aiming at</td></tr>
-        <tr><td>E</td><td>Dock at a station</td></tr><tr><td>L</td><td>Land on a nearby planet</td></tr>
+        <tr><td>E</td><td>Dock at a station</td></tr><tr><td>T / F</td><td>Lock a target / fire missiles (needs missile racks)</td></tr><tr><td>L</td><td>Land on a nearby planet</td></tr>
         <tr><td>M</td><td>Galaxy map (click a sector in range to jump)</td></tr>
         <tr><td>B</td><td>Build structures (left place, right remove, 1-6 block)</td></tr></table>
         <h3>On foot</h3><table>

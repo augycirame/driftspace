@@ -5,6 +5,20 @@ import { glowSprite } from './meshes.js';
 
 const boltGeo = new THREE.CylinderGeometry(1.1, 1.1, 34, 6).rotateX(Math.PI / 2);
 const up = new THREE.Vector3(0, 0, 1);
+const missileGeo = new THREE.CylinderGeometry(0.9, 0.9, 9, 8).rotateX(Math.PI / 2);
+let puffMat = null;
+// Soft round smoke for missile trails.
+function smokeMat() {
+  if (puffMat) return puffMat;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.45)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  puffMat = new THREE.SpriteMaterial({ map: tex, color: '#7a7e88', transparent: true, opacity: 0.35, depthWrite: false });
+  return puffMat;
+}
 let circleTex = null;
 
 export class FX {
@@ -27,6 +41,16 @@ export class FX {
     mesh.add(glow);
     this.scene.add(mesh);
     this.items.push({ obj: mesh, life: b.l, max: b.l, v: [b.vx, b.vy, b.vz], kind: 'bolt' });
+  }
+
+  // A homing missile: a small body with a hot exhaust and a smoke trail. It steers toward
+  // wherever where() says its target is, the same way the server's missile does.
+  missile(m, where) {
+    const body = new THREE.Mesh(missileGeo, new THREE.MeshBasicMaterial({ color: '#e8e4d8' }));
+    body.position.set(m.x, m.y, m.z);
+    body.add(glowSprite('#ffb050', 14, 1).translateZ(5));
+    this.scene.add(body);
+    this.items.push({ obj: body, life: 7, max: 7, kind: 'missile', v: [m.vx, m.vy, m.vz], where, target: m.target, smoke: 0 });
   }
 
   explosion(x, y, z, size, color = '#ffb060') {
@@ -172,7 +196,35 @@ export class FX {
     for (const it of this.items) {
       it.life -= dt;
       const k = Math.max(0, it.life / it.max);
-      if (it.kind === 'bolt') {
+      if (it.kind === 'missile') {
+        const v = it.v, sp = Math.hypot(...v) || 1, speed = Math.min(1500, sp + 900 * dt);
+        let d = [v[0] / sp, v[1] / sp, v[2] / sp];
+        const t = it.where(it.target), pos = it.obj.position;
+        if (t) {
+          const dx = t.x - pos.x, dy = t.y - pos.y, dz = t.z - pos.z, dl = Math.hypot(dx, dy, dz) || 1;
+          if (dl < (t.r || 12)) it.life = 0;
+          const k = Math.min(1, 2.6 * dt);
+          d = [d[0] + (dx / dl - d[0]) * k, d[1] + (dy / dl - d[1]) * k, d[2] + (dz / dl - d[2]) * k];
+          const l = Math.hypot(...d) || 1;
+          d = [d[0] / l, d[1] / l, d[2] / l];
+        }
+        it.v = [d[0] * speed, d[1] * speed, d[2] * speed];
+        pos.x += it.v[0] * dt; pos.y += it.v[1] * dt; pos.z += it.v[2] * dt;
+        it.obj.quaternion.setFromUnitVectors(up, new THREE.Vector3(...d).negate());
+        // Smoke puffs that linger and fade behind it.
+        it.smoke += dt;
+        while (it.smoke > 0.05) {
+          it.smoke -= 0.05;
+          const puff = new THREE.Sprite(smokeMat().clone());
+          puff.position.copy(pos);
+          puff.scale.setScalar(3);
+          this.scene.add(puff);
+          this.items.push({ obj: puff, life: 0.9, max: 0.9, kind: 'puff' });
+        }
+      } else if (it.kind === 'puff') {
+        it.obj.material.opacity = 0.35 * k;
+        it.obj.scale.setScalar(3 + (1 - k) * 9);
+      } else if (it.kind === 'bolt') {
         it.obj.position.x += it.v[0] * dt; it.obj.position.y += it.v[1] * dt; it.obj.position.z += it.v[2] * dt;
       } else if (it.kind === 'flash') {
         it.obj.material.opacity = k;

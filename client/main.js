@@ -263,12 +263,16 @@ function onMessage(m) {
       break;
     case 'jumped': S.lastJump = performance.now(); S.flash = 1; break;
     case 'bolts': for (const b of m.list) space.fx.bolt(b); break;
+    case 'missile':
+      space.fx.missile(m, targetPos);
+      if (m.target === 'p:' + S.myId && performance.now() - (S.warned || 0) > 2500) { S.warned = performance.now(); ui.toast('⚠ MISSILE INCOMING'); }
+      break;
     case 'hit': {
       const fx = fxNow(), space_ = S.you.mode === 'space';
       const you = m.id === S.myId;
-      if (space_) fx.spark(m.x, m.y, m.z, m.shield ? '#4bd8ff' : '#ffe0a0', 16);
+      if (space_) fx.spark(m.x, m.y, m.z, m.shield ? '#4bd8ff' : '#ffe0a0', you ? 4 : 16);
       else fx.burst(m.x, m.y, m.z, m.shield ? '#4bd8ff' : you ? '#ff6a5a' : '#ffd890', 0.5);
-      if (m.dmg > 0) fx.damage(m.x, m.y, m.z, m.dmg, { you, crit: m.crit, scale: space_ ? 14 : 1 });
+      if (m.dmg > 0 && !(space_ && you)) fx.damage(m.x, m.y, m.z, m.dmg, { you, crit: m.crit, scale: space_ ? 14 : 1 });
       break;
     }
     case 'boom': fxNow().explosion(m.x, m.y, m.z, m.size, m.organic ? '#9aff6a' : '#ffb060'); break;
@@ -402,6 +406,12 @@ addEventListener('keydown', (e) => {
   }
   if (S.you.mode === 'space') {
     if (k === 'e' && space.nearbyStation()) send({ t: 'dock' });
+    if (k === 't') cycleLock();
+    if (k === 'f') {
+      if (!S.you.stats.missiles) ui.toast('No missile racks. Add some in the shipyard (Y).');
+      else if (!S.lock) ui.toast('Lock a target first (T).');
+      else if (performance.now() - (S.lastMissile || 0) > S.you.stats.missileInterval * 1000) { S.lastMissile = performance.now(); send({ t: 'missile', target: S.lock }); }
+    }
     if (k === 'l') {
       const p = space.nearbyPlanet(serverTime());
       if (p) send({ t: 'land', planet: p.id }); else ui.toast('No planet close enough to land on.');
@@ -499,7 +509,7 @@ function spaceFrame(dt, now) {
   if (!locked() && !overlayOpen()) prompt = 'Click to take the controls';
   const hint = S.mode === 'build'
     ? 'BUILD · left: place · right: remove · wheel: distance · 1-6: block · B: exit'
-    : 'LMB fire · RMB mine · E dock · L land · M map · B build · H help';
+    : `LMB fire · RMB mine${st.missiles ? ' · T lock · F missiles' : ''} · E dock · L land · M map · B build · H help`;
 
   drawMarks();
 
@@ -627,6 +637,36 @@ function dungeonFrame(dt, now) {
   ui.hud(now, { prompt, hint: 'LMB shoot · E interact · V view · Shift run · H help', dungeon: { name: dungeon.msg.name, depth: dungeon.msg.depth, left: S.creatures.size, boss: dungeon.bossDead } });
 }
 
+// Missile lock: T cycles through targets in front of you, nearest to the crosshair first.
+function lockables() {
+  const me = S.me, f = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(...me.q)), range = S.you.stats.lockRange || 2600;
+  const out = [];
+  const consider = (id, o, name) => {
+    const dx = o.x - me.x, dy = o.y - me.y, dz = o.z - me.z, d = Math.hypot(dx, dy, dz);
+    if (d > range || d < 1) return;
+    const dot = (dx * f.x + dy * f.y + dz * f.z) / d;
+    if (dot > 0.5) out.push({ id, name, dot });
+  };
+  for (const n of S.npcs.values()) if (n.hostile || n.kind === 'pirate' || n.kind === 'hollow' || n.kind === 'mothership') consider(n.id, n, npcName(n));
+  for (const o of S.others.values()) if (!S.isPartyMember(o.key)) consider('p:' + o.id, o, o.name);
+  return out.sort((a, b) => b.dot - a.dot);
+}
+function cycleLock() {
+  const list = lockables();
+  if (!list.length) { S.lock = null; return ui.toast('No target in front of you to lock.'); }
+  const i = list.findIndex((x) => x.id === S.lock);
+  const next = list[(i + 1) % list.length];
+  S.lock = next.id;
+  ui.toast(`Locked: ${next.name}`);
+}
+const npcName = (n) => (n.race ? 'Alien ship' : { pirate: 'Pirate', hollow: 'Hollow', mothership: 'Hive Mothership', imperial: 'Imperial patrol', rebel: 'Rebel raider' }[n.kind] || 'Ship');
+// Where a missile's target is right now, for drawing it.
+function targetPos(id) {
+  if (id === 'p:' + S.myId) return { x: S.me.x, y: S.me.y, z: S.me.z, r: S.you.stats.radius };
+  const o = id.startsWith('p:') ? S.others.get(+id.slice(2)) || S.others.get(id.slice(2)) : S.npcs.get(id);
+  return o ? { x: o.x, y: o.y, z: o.z, r: o.kind === 'mothership' ? 170 : 14 } : null;
+}
+
 // Target brackets for hostiles and party members, with arrows at the screen edge when off-screen.
 const marks = $('marks'), marksCtx = marks.getContext('2d');
 function drawMarks() {
@@ -647,6 +687,25 @@ function drawMarks() {
   for (const o of S.others.values()) {
     if (!S.isPartyMember(o.key)) continue;
     targets.push({ x: o.x, y: o.y, z: o.z, d: Math.hypot(o.x - me.x, o.y - me.y, o.z - me.z), c: o.color, name: o.name });
+  }
+  // The locked target: a spinning red diamond, the range, and whether missiles are ready.
+  const lk = S.lock && targetPos(S.lock);
+  if (S.lock && (!lk || Math.hypot(lk.x - me.x, lk.y - me.y, lk.z - me.z) > (S.you.stats.lockRange || 2600) * 1.3)) S.lock = null;
+  else if (lk) {
+    v.set(lk.x, lk.y, lk.z).applyMatrix4(cam.matrixWorldInverse);
+    if (v.z < 0) {
+      v.applyMatrix4(cam.projectionMatrix);
+      const sx = (v.x * 0.5 + 0.5) * W, sy = (-v.y * 0.5 + 0.5) * H, r = 22, a = performance.now() / 600;
+      g.strokeStyle = g.fillStyle = '#ff3a3a';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      for (let i = 0; i <= 4; i++) { const ang = a + (i * Math.PI) / 2; g[i ? 'lineTo' : 'moveTo'](sx + Math.cos(ang) * r, sy + Math.sin(ang) * r); }
+      g.stroke();
+      g.font = 'bold 11px ui-monospace, monospace';
+      g.textAlign = 'center';
+      const ready = performance.now() - (S.lastMissile || 0) > (S.you.stats.missileInterval || 3.5) * 1000;
+      g.fillText(`LOCK ${Math.round(Math.hypot(lk.x - me.x, lk.y - me.y, lk.z - me.z))}${S.you.stats.missiles ? (ready ? ' · F' : ' · reloading') : ''}`, sx, sy - r - 8);
+    }
   }
   for (const t of targets) {
     v.set(t.x, t.y, t.z).applyMatrix4(cam.matrixWorldInverse);
