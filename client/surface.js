@@ -423,6 +423,13 @@ export class SurfaceView {
     c.multiplyScalar(1 - Math.min(0.45, slope * 1.2));
     const ix = (k % VERTS) - HALF_V, iz = Math.floor(k / VERTS) - HALF_V;
     if ((this.data.digs[`${ix},${iz}`] || 0) < -0.5) c.lerp(new THREE.Color('#3a2a1e'), 0.5);
+    // Inside towns the ground is trodden earth (no grass grows on it; cities are paved over it).
+    this.townRings ||= townsOf(this.planet).map((t) => [t.x, t.z, t.radius + 4]);
+    const wx = pos.getX(k), wz = pos.getZ(k);
+    for (const [tx, tz, tr] of this.townRings) {
+      const dd = Math.hypot(wx - tx, wz - tz);
+      if (dd < tr + 6) c.lerp(new THREE.Color('#7a6a54'), Math.min(1, (tr + 6 - dd) / 6) * 0.85);
+    }
     col.setXYZ(k, c.r, c.g, c.b);
   }
 
@@ -562,8 +569,10 @@ export class SurfaceView {
   // Spells, powers, transformations and claws, drawn from server messages.
   spellFx(m) {
     const fx = this.fx;
+    // Every spell opens a magic circle under its caster.
+    if (m.from) fx.circle(m.from[0], this.groundAt(m.from[0], m.from[2], m.from[1]), m.from[2], m.c, m.kind === 'frost' ? 2.6 : 1.6);
     if (m.from && m.to && (m.kind === 'firebolt' || m.kind === 'sunlance')) {
-      fx.tracer(m.from, m.to, m.c);
+      fx.beam(m.from, m.to, m.c, m.kind === 'sunlance' ? 0.14 : 0.09);
       fx.explosion(m.to[0], m.to[1], m.to[2], m.kind === 'sunlance' ? 2.4 : 1.6, m.c);
     } else if (m.kind === 'blink') {
       fx.spark(m.from[0], m.from[1], m.from[2], m.c, 3);
@@ -592,7 +601,7 @@ export class SurfaceView {
     for (const t of this.towns) {
       const owner = this.S.realmOwners?.[t.id] || t.realm;
       const mesh = buildTown(this.planet, t, owner);
-      const hall = t.buildings[0];
+      const hall = t.buildings.find((b) => b.kind === 'keep' || b.kind === 'hall') || t.buildings[0];
       const lb = label(`${t.name} · ${t.size}`, realmColor(owner), 1.1);
       lb.position.set(hall.x, mesh.userData.base + hall.h + (t.capital ? 14 : 9), hall.z);
       mesh.add(lb);

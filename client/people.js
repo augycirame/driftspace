@@ -85,6 +85,48 @@ const SSS = (chunk) => chunk.replace(
   vec3 wrapIrr = ( saturate( ( nlRaw + 0.45 ) / 1.45 ) * uScatter * ( 1.0 - dotNL ) + dotNL ) * directLight.color;
   reflectedLight.directDiffuse += mix( irradiance, wrapIrr, rSkin ) * BRDF_Lambert( material.diffuseContribution ) * ( 1.0 - F );`);
 
+// ---- the anime look: cel shading and ink outlines that follow the skeleton --------------------
+
+let toonGrad = null;
+function gradient() {
+  if (!toonGrad) {
+    toonGrad = new THREE.DataTexture(new Uint8Array([70, 150, 215, 255]), 4, 1, THREE.RedFormat);
+    toonGrad.minFilter = toonGrad.magFilter = THREE.NearestFilter;
+    toonGrad.needsUpdate = true;
+  }
+  return toonGrad;
+}
+// The same material (and its shader patches) as a cel-shaded one.
+function toonify(m) {
+  const t = new THREE.MeshToonMaterial({
+    color: m.color, map: m.map, normalMap: m.normalMap, normalScale: m.normalScale, alphaTest: m.alphaTest, alphaHash: m.alphaHash,
+    alphaToCoverage: m.alphaToCoverage, side: m.side, transparent: m.transparent, gradientMap: gradient(),
+    polygonOffset: m.polygonOffset, polygonOffsetFactor: m.polygonOffsetFactor, polygonOffsetUnits: m.polygonOffsetUnits,
+  });
+  t.onBeforeCompile = m.onBeforeCompile;
+  const key = m.customProgramCacheKey();
+  t.customProgramCacheKey = () => key + '-toon';
+  t.userData = m.userData;
+  return t;
+}
+let inkMat = null;
+function inkOutline(mesh, width = 0.006) {
+  inkMat ||= (() => {
+    const m = new THREE.MeshBasicMaterial({ color: '#1e1418', side: THREE.BackSide });
+    m.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normalize( objectNormal ) * ${width.toFixed(4)};`); };
+    m.customProgramCacheKey = () => 'person-ink';
+    return m;
+  })();
+  const ol = new THREE.SkinnedMesh(mesh.geometry, inkMat);
+  ol.bind(mesh.skeleton, mesh.bindMatrix);
+  ol.morphTargetDictionary = mesh.morphTargetDictionary;
+  ol.morphTargetInfluences = mesh.morphTargetInfluences;
+  ol.frustumCulled = false;
+  ol.userData.noInk = true;
+  mesh.parent.add(ol);
+  return ol;
+}
+
 function bodyMaterial(o) {
   const m = new THREE.MeshPhysicalMaterial({
     color: o.skin, roughness: 0.55, metalness: 0, sheen: 0.25, sheenRoughness: 0.6, sheenColor: new THREE.Color(o.skin).lerp(new THREE.Color('#ff8a70'), 0.5),
@@ -356,7 +398,7 @@ export function buildModelPerson(o) {
       n.frustumCulled = false;
       const key = n.name.slice(sex.length + 1);
       if (key === 'body') body = n;
-      else if (key === 'eyes') n.material = eyeMaterial(o.eyes);
+      else if (key === 'eyes') n.material = o.toon ? toonify(eyeMaterial(o.eyes)) : eyeMaterial(o.eyes);
       else if (key.startsWith('hair')) {
         // Each style is a scalp layer plus, for the longer ones, strands or a bun.
         const parts = { crop: ['hair_crop'], long: ['hair_long', 'hair_long_cards'], bob: ['hair_long', 'hair_bob_cards'],
@@ -364,6 +406,7 @@ export function buildModelPerson(o) {
         n.visible = !o.bald && parts.includes(key);
         if (key.endsWith('_cards')) { n.material = cardMaterial(o.hair); cards.push(n.material.userData.uniforms); }
         else n.material = hairMaterial(o.hair, key !== 'hair_bun');
+        if (o.toon) n.material = toonify(n.material);
         if (!n.visible) unused.push(n);
       }
       if (n.morphTargetDictionary) for (const [k, i] of Object.entries(n.morphTargetDictionary)) n.morphTargetInfluences[i] = k === 'covered' ? (o.top ? 1 : 0) : o.build?.[k] || 0;
@@ -373,7 +416,8 @@ export function buildModelPerson(o) {
   // Necklines: a high collar for flight suits, lower for tunics (as a height on the body, like the bake).
   const neckY = modelPos(bones.neck01, g).y;
   o.neck = (neckY + (o.suit ? 0.075 : o.robe ? 0.04 : 0.03)) / 1.75;
-  body.material = bodyMaterial(o);
+  body.material = o.toon ? toonify(bodyMaterial(o)) : bodyMaterial(o);
+  if (o.toon) inkOutline(body);
   const root = new THREE.Group();
   root.add(g);
   g.scale.set((o.width || 1) * (o.height || 1), o.height || 1, (o.width || 1) * (o.height || 1));

@@ -16,12 +16,13 @@ const MATS = {
   plaster: ['#e8dcc0', {}], timber: ['#5a4030', {}], wood: ['#7a5a3a', {}], logs: ['#6a4a30', {}], thatch: ['#d6b45e', {}],
   slate: ['#2e2a34', {}], teal: ['#3f8a86', {}], gold: ['#d8b048', { metal: true }], bronze: ['#a8783a', { metal: true }], iron: ['#4a4a50', { metal: true }],
   turf: ['#6e6a40', {}], fur: ['#8a7a60', {}], bone: ['#e8dcc4', {}], soil: ['#6a4a32', {}], crop: ['#7aa04a', {}], cloth: ['#c8a050', {}],
+  cobble: ['#8a847a', { stone: 0.6 }], tile: ['#9a4a32', {}], water: ['#2e5a6e', { water: true }], leaves: ['#4a7a3a', {}],
   glow: ['#ffd890', { glow: 0.7 }], redglow: ['#ff4a4a', { glow: 0.6 }], blueglow: ['#bfeaff', { glow: 0.9 }], ember: ['#ff8a3a', { glow: 1 }],
 };
 
 // What each material looks like up close in the realistic style: [normal map, scale, strength, weathering].
 const REAL = {
-  stone: ['cobble', 0.32, 1.2, 0.3], darkstone: ['cobble', 0.32, 1.2, 0.3], dwarfstone: ['rock', 0.25, 1.2, 0.3], whitestone: ['plaster', 0.4, 0.6, 0.18],
+  stone: ['cobble', 0.32, 1.2, 0.3], cobble: ['cobble', 0.55, 1.3, 0.35], tile: ['tiles', 0.6, 1, 0.25], leaves: ['fabric', 3, 1.2, 0.3], darkstone: ['cobble', 0.32, 1.2, 0.3], dwarfstone: ['rock', 0.25, 1.2, 0.3], whitestone: ['plaster', 0.4, 0.6, 0.18],
   plaster: ['plaster', 0.5, 0.8, 0.25], timber: ['wood', 0.6, 1, 0.25], wood: ['planks', 0.4, 1, 0.22], logs: ['bark', 0.5, 1.2, 0.25],
   thatch: ['bark', 1.4, 1.3, 0.35], slate: ['tiles', 0.45, 1, 0.2], teal: ['tiles', 0.45, 0.9, 0.2], gold: ['scratched', 1, 0.5, 0.1],
   bronze: ['scratched', 1, 0.6, 0.15], iron: ['scratched', 1, 0.7, 0.2], turf: ['ground', 0.4, 1, 0.3], fur: ['fabric', 2, 1, 0.2],
@@ -31,6 +32,7 @@ const REAL = {
 function material(key, color) {
   const [c, o] = MATS[key] || [color, {}];
   const real = realism();
+  if (o.water) return new THREE.MeshStandardMaterial({ color: c, roughness: 0.08, metalness: 0.2 });
   const m = new THREE.MeshStandardMaterial({ color: color || c, roughness: o.metal ? 0.45 : 0.9, metalness: o.metal ? (real ? 0.85 : 0.4) : 0, flatShading: !!o.stone && !real, emissive: o.glow ? c : '#000000', emissiveIntensity: (o.glow || 0) * (real ? 2 : 1) });
   if (o.stone) m.userData.stone = o.stone;
   const r = real && !o.glow && (REAL[key] || ['fabric', 1, 0.8, 0.18]);
@@ -173,10 +175,100 @@ function clanLonghouse(k, b, banner) {
   }
 }
 
+// ---- city buildings -----------------------------------------------------------------------------
+
+// What each people builds a city in: ground floor, upper floors, trim, roof.
+const CITY = {
+  timber: { base: 'stone', upper: 'plaster', trim: 'timber', roof: 'tile' },
+  elven: { base: 'whitestone', upper: 'whitestone', trim: 'gold', roof: 'teal' },
+  dwarven: { base: 'dwarfstone', upper: 'dwarfstone', trim: 'bronze', roof: null },
+  gothic: { base: 'darkstone', upper: 'darkstone', trim: 'iron', roof: 'slate' },
+  clan: { base: 'stone', upper: 'logs', trim: 'timber', roof: 'turf' },
+};
+
+// A tall town house on a street: a stone ground floor (a shop for some), upper floors with lit
+// windows front and back, beams between floors, a roof with its ridge along the street, a chimney.
+function rowhouse(k, b) {
+  const c = CITY[b.style] || CITY.timber;
+  const { w, d } = b, floors = b.floors || 2, fh = 3.1, H = floors * fh;
+  k.put(c.base, box(w, fh + 0.6, d), 0, (fh + 0.6) / 2, 0);
+  if (floors > 1) k.put(c.upper, box(w + 0.3, H - fh, d + 0.3), 0, fh + 0.6 + (H - fh) / 2, 0);
+  for (let f = 1; f < floors; f++) k.put(c.trim, box(w + 0.5, 0.25, d + 0.5), 0, f * fh + 0.6, 0);
+  if (b.style === 'timber') for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.put('timber', box(0.3, H - fh, 0.3), sx * (w / 2 + 0.1), fh + 0.6 + (H - fh) / 2, sz * (d / 2 + 0.1));
+  const nwin = Math.max(1, Math.floor(w / 2.4));
+  for (let f = 0; f < floors; f++) for (let i = 0; i < nwin; i++) {
+    const x = (i - (nwin - 1) / 2) * (w / nwin);
+    if (f === 0 && i === Math.floor(nwin / 2)) continue;          // the door goes here
+    const lit = ((i * 7 + f * 3 + Math.round(w * 10)) % 5) !== 0;
+    for (const sz of [-1, 1]) {
+      k.put(lit ? 'glow' : 'slate', box(0.9, 1.3, 0.1), x, f * fh + 0.6 + 1.6, sz * (d / 2 + 0.17));
+      k.put(c.trim, box(1.15, 0.15, 0.25), x, f * fh + 0.6 + 0.85, sz * (d / 2 + 0.2));
+    }
+  }
+  k.put('wood', box(1.3, 2.4, 0.2), 0, 1.2, d / 2 + 0.12);
+  if ((Math.round(w * 13) % 3) === 0) k.put('cloth', box(w * 0.8, 0.1, 1.6), 0, 3, d / 2 + 0.85, 0.35, 0, 0, ['#b8423a', '#3a6ab8', '#c8a040', '#4a8a4a'][Math.round(d * 7) % 4]);
+  const top = H + 0.6;
+  if (c.roof) k.put(c.roof, gable(d + 1, 2.6 + d * 0.15, w + 0.8), 0, top, 0, 0, Math.PI / 2, 0);
+  else { k.put(c.base, box(w + 0.6, 0.6, d + 0.6), 0, top + 0.3, 0); for (const sx of [-1, 1]) k.put(c.base, box(0.6, 0.8, d + 0.6), sx * (w / 2), top + 0.9, 0); }
+  k.put(c.base === 'whitestone' ? 'whitestone' : 'stone', box(0.8, 2.6, 0.8), w * 0.3, top + 1.6, -d * 0.15);
+}
+
+function tower(k, b, banner) {
+  const c = CITY[b.style] || CITY.timber;
+  const r = b.w * 0.5;
+  k.put(c.base, cyl(r, r * 1.1, b.h, 12), 0, b.h / 2, 0);
+  for (let f = 1; f < b.h / 4; f++) for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + f;
+    k.put('glow', box(0.6, 1.1, 0.1), Math.cos(a) * (r + 0.02), f * 4, Math.sin(a) * (r + 0.02), 0, -a + Math.PI / 2, 0);
+  }
+  k.put(c.trim, cyl(r * 1.15, r * 1.15, 0.5, 12), 0, b.h, 0);
+  k.put(c.roof || c.base, cyl(0, r * 1.25, r * 2.2, 12), 0, b.h + r * 1.1, 0);
+  k.put('timber', cyl(0.06, 0.06, 3, 6), 0, b.h + r * 2.2 + 1.5, 0);
+  k.put('cloth', box(1.4, 0.8, 0.05), 0.7, b.h + r * 2.2 + 2.4, 0, 0, 0, 0, banner);
+}
+
+function cityProp(k, b, banner) {
+  if (b.kind === 'plaza') { k.put('cobble', cyl(b.w / 2, b.w / 2, 0.7, 40), 0, 0.33, 0); return true; }
+  if (b.kind === 'road') { k.put('cobble', box(b.w, 0.7, b.d), 0, 0.33, 0); return true; }
+  if (b.kind === 'rowhouse') { rowhouse(k, b); return true; }
+  if (b.kind === 'tower') { tower(k, b, banner); return true; }
+  if (b.kind === 'guild') { STYLES[b.style]?.(k, { ...b, kind: 'hall', h: 10 }, banner); return true; }
+  if (b.kind === 'fountain') {
+    k.put('stone', cyl(3, 3.2, 0.9, 24), 0, 0.45, 0);
+    k.put('water', cyl(2.7, 2.7, 0.2, 24), 0, 0.8, 0);
+    k.put('stone', cyl(0.5, 0.7, 2.6, 10), 0, 1.3, 0);
+    k.put('stone', cyl(1.2, 0.6, 0.4, 16), 0, 2.6, 0);
+    k.put('water', cyl(1, 1, 0.1, 16), 0, 2.8, 0);
+    return true;
+  }
+  if (b.kind === 'stall') {
+    k.put('wood', box(2.2, 1, 1.2), 0, 0.5, 0);
+    for (const sx of [-1, 1]) k.put('timber', box(0.12, 2.6, 0.12), sx * 1.05, 1.3, -0.5);
+    k.put('cloth', box(2.6, 0.12, 1.8), 0, 2.6, 0, 0.2, 0, 0, b.color);
+    k.put('crop', box(1.8, 0.25, 0.8), 0, 1.1, 0.1);
+    return true;
+  }
+  if (b.kind === 'lamp') {
+    k.put('iron', cyl(0.07, 0.1, 3.6, 6), 0, 1.8, 0);
+    k.put('iron', box(0.5, 0.08, 0.5), 0, 3.65, 0);
+    k.put('glow', box(0.32, 0.45, 0.32), 0, 3.95, 0);
+    k.put('iron', cyl(0, 0.3, 0.3, 4), 0, 4.32, 0);
+    return true;
+  }
+  if (b.kind === 'planter') {
+    k.put('stone', box(1.4, 0.6, 1.4), 0, 0.3, 0);
+    k.put('wood', cyl(0.12, 0.16, 2.4, 6), 0, 1.6, 0);
+    k.put('leaves', new THREE.IcosahedronGeometry(1.3, 1), 0, 3.3, 0);
+    return true;
+  }
+  return false;
+}
+
 const STYLES = { timber: timberHouse, elven: elvenHouse, dwarven: dwarfHall, gothic: gothicManor, clan: clanLonghouse };
 
 function special(k, b, banner) {
   const style = b.style;
+  if (cityProp(k, b, banner)) return;
   if (b.kind === 'keep' && (style === 'timber' || style === 'clan')) return roundKeep(k, b, banner);
   if (b.kind === 'well') {
     k.put(style === 'gothic' ? 'darkstone' : 'stone', cyl(1.2, 1.3, 1, 12), 0, 0.5, 0);
@@ -239,6 +331,7 @@ export function buildTown(planet, town, realmId) {
     k.at(w.x, base - 0.6, w.z, w.rot);
     if (w.stone) {
       k.put('stone', box(1.3, w.h, w.len), 0, w.h / 2, 0);
+      if (w.tower) { k.put('stone', cyl(2.2, 2.4, w.h + 4, 12), 0, (w.h + 4) / 2, 0); k.put('slate', cyl(0, 2.7, 3.2, 12), 0, w.h + 5.6, 0); }
       for (let i = 0; i < Math.floor(w.len / 2); i++) k.put('stone', box(1.5, 0.9, 0.9), 0, w.h + 0.45, -w.len / 2 + 1 + i * 2);
     } else {
       k.put('logs', box(0.9, w.h, w.len), 0, w.h / 2, 0);

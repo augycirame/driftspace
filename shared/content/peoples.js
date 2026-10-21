@@ -124,7 +124,7 @@ export const TOWN_SIZES = {
   hamlet: { name: 'hamlet', radius: 26, houses: [3, 5], roles: ['farmer', 'hunter', 'guard'], extra: 1 },
   village: { name: 'village', radius: 34, houses: [5, 8], roles: ['steward', 'merchant', 'farmer', 'hunter', 'guard', 'guard', 'innkeeper'], extra: 2 },
   town: { name: 'town', radius: 44, houses: [8, 12], roles: ['steward', 'captain', 'merchant', 'smith', 'priest', 'innkeeper', 'healer', 'guard', 'guard', 'guard', 'bard'], extra: 2 },
-  city: { name: 'city', radius: 54, houses: [11, 15], roles: ['ruler', 'steward', 'captain', 'merchant', 'merchant', 'smith', 'priest', 'mage', 'healer', 'innkeeper', 'bard', 'guard', 'guard', 'guard', 'guard'], extra: 2 },
+  city: { name: 'city', radius: 96, houses: [11, 15], roles: ['ruler', 'steward', 'captain', 'merchant', 'merchant', 'smith', 'priest', 'mage', 'healer', 'innkeeper', 'bard', 'guard', 'guard', 'guard', 'guard'], extra: 14 },
 };
 
 // Trade goods sold in towns. Prices move with supply, demand and politics.

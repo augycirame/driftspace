@@ -268,7 +268,8 @@ function pick(list, key, salt = 0) {
 //   opts: tunic, skin, hair, eyes, armor, female, ears (elf), beard, height, width (dwarf),
 //         robe, cloak, role gear (crown, helmet, spear, staff, hammer, bow, hat, apron, lute).
 export function buildHuman(opts) {
-  if (realism()) {
+  // The rigged people serve the realistic style and (cel-shaded) the anime style.
+  if (realism() || animeMode === 'anime') {
     const o = { armor: 0, height: 1, width: 1, ...opts };
     const female = !!o.female;
     const dwarf = o.width > 1.1;
@@ -281,9 +282,14 @@ export function buildHuman(opts) {
       pantLen: 0.86, bootTop: 0.68, skirt: o.robe ? 0.95 : 0.3, cloak: o.cloak, fur: o.fur, apron: o.apron, armor: o.armor, helmet: o.helmet, plume: o.plume,
       crown: o.crown, hat: o.hat, dance: !!o.lute, spear: o.spear, shield: o.shield, staff: o.staff, hammer: o.hammer, bow: o.bow, lute: o.lute,
       height: o.height * (dwarf ? 0.95 : 1), width: dwarf ? 1.25 : 1,
+      toon: animeMode === 'anime',
       build: { ...L.build, elf: o.ears ? 1 : 0, heavy: dwarf ? 0.9 : L.build.heavy, muscle: dwarf ? 0.9 : L.build.muscle, thin: o.ears ? 0.4 : L.build.thin },
-    }, () => buildRealHuman(opts));
+    }, () => (animeMode === 'anime' ? buildHumanToon(opts) : buildRealHuman(opts)));
   }
+  return buildHumanToon(opts);
+}
+
+function buildHumanToon(opts) {
   const o = { armor: 0, female: false, ears: false, beard: false, height: 1, width: 1, gun: true, ...opts };
   const g = new THREE.Group();
   const body = new THREE.Group();
@@ -598,7 +604,7 @@ function modelOr(opts, fallback) {
   return wrap;
 }
 
-function buildRealPerson(color, armor) {
+function buildRealPerson(color, armor, toon = false) {
   const suit = new THREE.Color(color);
   const hsl = {}; suit.getHSL(hsl);
   suit.setHSL(hsl.h, Math.min(hsl.s, 0.35), 0.32);
@@ -607,8 +613,8 @@ function buildRealPerson(color, armor) {
   return modelOr({
     female, skin: look.skin, hair: look.hair, eyes: look.eyes, melanin: look.melanin, flush: look.flush, freckles: look.freckles, hairStyle: female ? (look.r() < 0.5 ? 'ponytail' : 'bun') : 'crop', build: look.build, stubble: female ? 0 : 0.35,
     top: suit, pants: suit, boots: '#2a2622', gloves: '#24221f', gloved: true, suit: true, strap: '#2c2c28', sleeve: 0.79, pantLen: 0.86, bootTop: 0.62, gun: true, armor,
-    height: female ? 1.0 : 1.03,
-  }, () => buildRealHumanPilot(suit, color, armor, female));
+    height: female ? 1.0 : 1.03, toon,
+  }, () => (toon ? buildAnimePerson(color, armor) : buildRealHumanPilot(suit, color, armor, female)));
 }
 
 function buildRealHumanPilot(suit, color, armor, female) {
@@ -620,8 +626,8 @@ function buildRealHumanPilot(suit, color, armor, female) {
 
 export function buildPerson(color, armor = 0) {
   if (animeMode === 'chibi') return buildChibiPerson(color, armor);
+  if (animeMode === 'anime' || realism()) return buildRealPerson(color, armor, animeMode === 'anime');
   if (animeMode) return buildAnimePerson(color, armor);
-  if (realism()) return buildRealPerson(color, armor);
   const g = new THREE.Group();
   const suit = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.2 });
   const plate = new THREE.MeshStandardMaterial({ color: armor > 60 ? '#c9a24a' : armor > 20 ? '#7a8aa0' : '#3a4250', roughness: 0.4, metalness: 0.6 });

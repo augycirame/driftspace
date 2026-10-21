@@ -38,7 +38,7 @@ const gfx = new Graphics(canvas);
 S.gfx = gfx;
 setAnimeMode(gfx.anime && gfx.style);
 // Realistic people come from a model: start fetching it right away.
-if (!gfx.anime) loadPeople().catch(() => {});
+if (gfx.style !== 'chibi') loadPeople().catch(() => {});
 const space = new SpaceView(S);
 const surface = new SurfaceView(S);
 const dungeon = new DungeonView(S);
@@ -49,6 +49,7 @@ window.__views = { space, surface, dungeon };
 // Changing quality rebuilds what depends on it (planet textures, shadows, plants).
 gfx.onChange(() => {
   setAnimeMode(gfx.anime && gfx.style);
+  if (gfx.style !== 'chibi') loadPeople().catch(() => {});
   space.clearEntities();
   space.selfRev = -1;
   space.rebuildSectors();
@@ -122,6 +123,7 @@ function onMessage(m) {
       break;
     case 'welcome': {
       S.connected = true;
+      S.myId = m.id;
       S.seed = m.seed;
       S.timeOffset = m.time - Date.now();
       S.you = m.you;
@@ -262,12 +264,15 @@ function onMessage(m) {
     case 'jumped': S.lastJump = performance.now(); S.flash = 1; break;
     case 'bolts': for (const b of m.list) space.fx.bolt(b); break;
     case 'hit': {
-      const fx = fxNow();
-      fx.spark(m.x, m.y, m.z, m.shield ? '#4bd8ff' : '#ffe0a0', S.you.mode === 'space' ? 16 : 1.2);
+      const fx = fxNow(), space_ = S.you.mode === 'space';
+      const you = m.id === S.myId;
+      if (space_) fx.spark(m.x, m.y, m.z, m.shield ? '#4bd8ff' : '#ffe0a0', 16);
+      else fx.burst(m.x, m.y, m.z, m.shield ? '#4bd8ff' : you ? '#ff6a5a' : '#ffd890', 0.5);
+      if (m.dmg > 0) fx.damage(m.x, m.y, m.z, m.dmg, { you, scale: space_ ? 14 : 1 });
       break;
     }
     case 'boom': fxNow().explosion(m.x, m.y, m.z, m.size, m.organic ? '#9aff6a' : '#ffb060'); break;
-    case 'shot': for (const to of m.to) fxNow().tracer(m.from, to, m.c); break;
+    case 'shot': for (const to of m.to) { if (S.you.mode === 'space') fxNow().tracer(m.from, to, m.c); else fxNow().beam(m.from, to, m.c); } break;
     case 'died': S.dead = true; ui.death(m.by, m.respawnIn); break;
     case 'docked': ui.station(m); break;
     case 'shop': ui.shop(m); break;
