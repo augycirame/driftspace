@@ -4,16 +4,26 @@
 import { generateSector, sectorOf, findPlanet, isSafe, territoryOf } from '/shared/universe.js';
 import { ORES, ORE_IDS, BLOCKS, BLOCK_IDS, UPGRADES, upgradeCost, cargoTotal, canAfford, blockAllowed } from '/shared/rules.js';
 import { RECIPES, RECIPE_IDS, recipeCost } from '/shared/crafting.js';
-import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, itemName, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
+import { TIERS, ARMOR_SLOTS, ARMOR_SLOT_IDS, WEAPON_IDS, GRADES, AFFIXES, MAX_PLUS, ENHANCE_CHANCE, enhanceCost, itemName, itemColor, weaponStats, itemValue, relicColor, describeBonus, RELIC_SLOTS } from '/shared/items.js';
 import { TERRAINS, CREATURES, STRUCTURES, RELICS, RELIC_RARITY, FACTIONS, GODS, HOLY_CAPITAL, TERRITORY, factionTitle, ALIEN_RACES, DUNGEON_THEMES } from '/shared/content/index.js';
 import { TUTORIAL, WARDEN_LINES } from '/shared/tutorial.js';
 import { terrainOf as terrainOfPlanet, gravityOf } from '/shared/planet.js';
 import { PEOPLES, CLIMATES } from '/shared/content/peoples.js';
-import { SKILLS, SKILL_IDS, skillLevel, xpForLevel, SPELLS, POWERS, CURSES, mechStats, MAX_ENERGY } from '/shared/powers.js';
+import { SKILLS, SKILL_IDS, skillLevel, skillBonus, xpForLevel, SPELLS, POWERS, CURSES, mechStats, MAX_ENERGY } from '/shared/powers.js';
 import { climateOf, sunAt, weatherAt, weatherInfo, townsOf } from '/shared/towns.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// An item's grade, bonus stats and maker, as small lines under its name.
+function gradeLines(it) {
+  if (!it.grade || (it.grade === 'common' && !it.maker)) return '';
+  const g = GRADES[it.grade];
+  const lines = [`<span style="color:${g.color}">${g.name}</span>`];
+  for (const a of it.affixes || []) lines.push(`<span style="color:#9fd8ff">${AFFIXES[a.id].fmt(a.v)}</span>`);
+  if (it.maker) lines.push(`<span class="dim">Forged by ${esc(it.maker)}</span>`);
+  return `<br><span class="small">${lines.join(' · ')}</span>`;
+}
 
 export class UI {
   constructor(state, send) {
@@ -179,18 +189,18 @@ export class UI {
       p.innerHTML = `Credits: <b>${you.credits}</b> · Stock changes daily.`;
       body.appendChild(p);
       for (const s of msg.stock) {
-        const nm = itemName(s), color = TIERS[s.tier].color;
-        const detail = s.kind === 'weapon' ? (() => { const w = weaponStats(s); return `${Math.round(w.damage * w.pellets)} dmg × ${w.rate}/s · range ${Math.round(w.range)}`; })()
+        const nm = itemName(s), color = itemColor(s);
+        const detail = s.kind === 'weapon' ? (() => { const w = weaponStats(s); return `${Math.round(w.damage * w.pellets)} dmg × ${+w.rate.toFixed(1)}/s · range ${Math.round(w.range)}`; })()
           : s.kind === 'mech' ? `${mechStats(s.tier).hp} hp · cannon ${Math.round(mechStats(s.tier).damage)} dmg · G to pilot` : `+${Math.round(ARMOR_SLOTS[s.type].armor * s.tier * TIERS[s.tier].mult)} armor`;
         const b = this.button(`${s.price} cr`, () => this.send({ t: 'buy', slot: s.slot }));
         b.disabled = you.credits < s.price;
-        body.appendChild(this.row(`<b style="color:${color}">${esc(nm)}</b><br><span class="small dim">${detail}</span>`, b));
+        body.appendChild(this.row(`<b style="color:${color}">${esc(nm)}</b><br><span class="small dim">${detail}</span>${gradeLines(s)}`, b));
       }
       const h = document.createElement('h3');
       h.textContent = 'Sell your gear';
       body.appendChild(h);
       for (const it of you.inv.items) {
-        body.appendChild(this.row(`<span style="color:${TIERS[it.tier].color}">${esc(itemName(it))}</span>`, this.button(`Sell ${Math.round(itemValue(it) * 0.5)} cr`, () => this.send({ t: 'sell_item', id: it.id }), 'alt')));
+        body.appendChild(this.row(`<span style="color:${itemColor(it)}">${esc(itemName(it))}</span>`, this.button(`Sell ${Math.round(itemValue(it) * 0.5)} cr`, () => this.send({ t: 'sell_item', id: it.id }), 'alt')));
       }
     });
   }
@@ -204,8 +214,8 @@ export class UI {
       const ws = w ? weaponStats(w) : null;
       const top = document.createElement('div');
       top.innerHTML =
-        `<table><tr><td>Weapon</td><td>${w ? `<span style="color:${TIERS[w.tier].color}">${esc(itemName(w))}</span> · ${Math.round(ws.damage * ws.pellets * ws.rate)} dps` : '<span class="dim">none</span>'}</td></tr>` +
-        ARMOR_SLOT_IDS.map((s) => { const a = find(eq[s]); return `<tr><td>${ARMOR_SLOTS[s].name}</td><td>${a ? `<span style="color:${TIERS[a.tier].color}">${esc(itemName(a))}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
+        `<table><tr><td>Weapon</td><td>${w ? `<span style="color:${itemColor(w)}">${esc(itemName(w))}</span> · ${Math.round(ws.damage * ws.pellets * ws.rate)} dps` : '<span class="dim">none</span>'}</td></tr>` +
+        ARMOR_SLOT_IDS.map((s) => { const a = find(eq[s]); return `<tr><td>${ARMOR_SLOTS[s].name}</td><td>${a ? `<span style="color:${itemColor(a)}">${esc(itemName(a))}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
         RELIC_SLOTS.map((s, i) => { const r = find(eq[s]); return `<tr><td>Relic ${i + 1}</td><td>${r ? `<span style="color:${relicColor(r)}">${esc(itemName(r))}</span> <span class="dim small">${describeBonus(RELICS[r.type].bonus)}</span>` : '<span class="dim">none</span>'}</td></tr>`; }).join('') +
         `<tr><td>Armor</td><td>${you.armor?.armor || 0} (${Math.round((you.armor?.reduction || 0) * 100)}% damage reduction)</td></tr>` +
         `<tr><td>Health</td><td>${Math.round(you.hp)} / ${you.maxHp}</td></tr></table>`;
@@ -220,8 +230,9 @@ export class UI {
         const el = document.createElement('div');
         el.className = 'item' + (on ? ' eq' : '');
         const det = it.kind === 'relic' ? describeBonus(RELICS[it.type].bonus)
-          : it.kind === 'weapon' ? (() => { const s = weaponStats(it); return `${Math.round(s.damage * s.pellets)} dmg · ${s.rate}/s`; })() : it.kind === 'mech' ? `${mechStats(it.tier).hp} hp mech (G)` : `${ARMOR_SLOTS[it.type].name} armor`;
-        el.innerHTML = `<b style="color:${TIERS[it.tier].color}">${esc(itemName(it))}</b><span class="dim">${det}</span>`;
+          : it.kind === 'weapon' ? (() => { const s = weaponStats(it); return `${Math.round(s.damage * s.pellets)} dmg · ${+s.rate.toFixed(1)}/s`; })() : it.kind === 'mech' ? `${mechStats(it.tier).hp} hp mech (G)` : `${ARMOR_SLOTS[it.type].name} armor`;
+        el.innerHTML = `<b style="color:${itemColor(it)}">${esc(itemName(it))}</b><span class="dim">${det}</span>${gradeLines(it)}`;
+        if (it.grade && it.grade !== 'common') el.style.borderColor = itemColor(it);
         const slot = it.kind === 'weapon' ? 'weapon' : it.kind === 'relic' ? RELIC_SLOTS.find((r) => eq[r] === it.id) : it.type;
         el.appendChild(this.button(on ? 'Unequip' : 'Equip', () => this.send(on ? { t: 'unequip', slot } : { t: 'equip', id: it.id }), on ? 'alt' : ''));
         el.appendChild(this.button('Discard', () => { if (confirm(`Discard ${itemName(it)}?`)) this.send({ t: 'drop', id: it.id }); }, 'alt'));
@@ -613,13 +624,35 @@ export class UI {
         const ok = canAfford(you.cargo, cost);
         const costTxt = Object.entries(cost).map(([k, v]) => `<span style="color:${(you.cargo[k] || 0) >= v ? '#9fe0a0' : '#ff9a8a'}">${v} ${ORES[k]?.name || k}</span>`).join(', ');
         const wrap = document.createElement('span');
-        const types = r.makes === 'weapon' ? ['pistol', 'rifle', 'shotgun', 'plasma', 'railgun'] : r.makes === 'armor' ? ['helmet', 'chest', 'legs'] : [null];
+        const types = r.makes === 'weapon' ? WEAPON_IDS : r.makes === 'armor' ? ['helmet', 'chest', 'legs'] : [null];
         for (const type of types) {
           const b = this.button(type ? type[0].toUpperCase() + type.slice(1) : 'Craft', () => this.send({ t: 'craft', recipe: id, tier, type }), ok ? '' : 'alt');
           b.disabled = !ok;
           wrap.appendChild(b);
         }
         body.appendChild(this.row(`<b>${esc(r.name)}</b> <span class="small dim">tier ${tier}</span><br><span class="small">${costTxt}</span>`, wrap));
+      }
+      // Enhancement: +1 at a time, riskier the higher it goes.
+      const gear = you.inv.items.filter((i) => i.kind === 'weapon' || i.kind === 'armor');
+      if (!gear.length) return;
+      const h = document.createElement('h3');
+      h.textContent = 'Enhance gear';
+      body.appendChild(h);
+      const note = document.createElement('p');
+      note.className = 'small dim';
+      note.textContent = `Each level adds about 7% damage or 6% armor, up to +${MAX_PLUS}. Past +5 a failed attempt costs a level.`;
+      body.appendChild(note);
+      for (const it of gear) {
+        const plus = it.plus || 0;
+        if (plus >= MAX_PLUS) { body.appendChild(this.row(`<b style="color:${itemColor(it)}">${esc(itemName(it))}</b>`, document.createTextNode('Max'))); continue; }
+        const c = enhanceCost(it);
+        const ok = you.credits >= c.credits && canAfford(you.cargo, c.ores);
+        const costTxt = [`<span style="color:${you.credits >= c.credits ? '#9fe0a0' : '#ff9a8a'}">${c.credits} cr</span>`,
+          ...Object.entries(c.ores).map(([k, v]) => `<span style="color:${(you.cargo[k] || 0) >= v ? '#9fe0a0' : '#ff9a8a'}">${v} ${ORES[k]?.name || k}</span>`)].join(', ');
+        const chance = Math.round(Math.min(1, ENHANCE_CHANCE[plus] + skillBonus(you.skills, 'crafting') * 0.3) * 100);
+        const b = this.button(`+${plus + 1} · ${chance}%`, () => this.send({ t: 'enhance', id: it.id }), ok ? '' : 'alt');
+        b.disabled = !ok;
+        body.appendChild(this.row(`<b style="color:${itemColor(it)}">${esc(itemName(it))}</b><br><span class="small">${costTxt}</span>`, b));
       }
     });
   }

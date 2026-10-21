@@ -185,6 +185,19 @@ around you for double damage. **Q** is **Vorpal Strike**, a lunge that runs you 
 everything in a line (every 5 seconds). Swords work in dungeons too. Every hit throws sparks
 and a damage number; spells open a magic circle under the caster.
 
+## Item grades and enhancement
+
+Weapons and armor come in five grades: **common**, **rare** (blue), **epic** (purple), **unique**
+(gold) and **legendary** (orange). Higher grades have stronger base stats and one to four bonus
+stats: sharpness, swiftness, precision (critical hits for double damage), life drain and reach
+on weapons; toughness and vitality on armor. Unique and legendary pieces carry their own names.
+Loot grades get better further from home, and skilled crafters forge better grades more often.
+Crafted gear is signed by its maker.
+
+At a workbench, smithy or station (C) you can **enhance** gear from +1 up to +10, paying credits
+and ore. Each level adds about 7% damage or 6% armor. The first levels always succeed; past +5,
+a failed attempt costs a level.
+
 ## Native peoples, towns and realms
 
 Every landable world is inhabited. Humans (the Reachfolk), elves (the Eldar), dwarves (the

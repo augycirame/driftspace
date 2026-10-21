@@ -8,7 +8,7 @@ import { CREATURES } from '../shared/content/creatures.js';
 import { RELICS } from '../shared/content/relics.js';
 import { generateDungeon, canStand, isFloor, lineOfSight, dungeonSeed, dungeonDepth } from '../shared/dungeon.js';
 import { creatureStats } from '../shared/planet.js';
-import { weaponStats, randomItem, randomRelic, makeRelic, RUN_SPEED } from '../shared/items.js';
+import { weaponStats, strike, randomItem, randomRelic, makeRelic, RUN_SPEED } from '../shared/items.js';
 
 const EMPTY_RESET_MS = 2 * 60 * 1000;
 const num = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -134,7 +134,7 @@ export class Dungeons {
       for (const e of [...inst.enemies.values()]) {
         const dx = e.x - p.px, dz = e.z - p.pz, dist = Math.hypot(dx, dz);
         if (dist > reach + e.size * 0.6 || (dist > 0.4 && (dx * fwd[0] + dz * fwd[1]) / dist < cosArc)) continue;
-        this.hurtEnemy(inst, e, ws.damage * (skill ? 2.2 : 1), conn);
+        this.blow(conn, inst, e, ws, ws.damage * (skill ? 2.2 : 1));
       }
       this.toInstance(inst, { t: 'slash', by: conn.id, x: p.px, y: p.py + 1.1, z: p.pz, dir: fwd, combo: skill ? 3 : p.combo, c: ws.color, reach });
       return;
@@ -158,17 +158,23 @@ export class Dungeons {
         if (Math.hypot(vx - d[0] * t, vy - d[1] * t, vz - d[2] * t) < e.size + 0.5) { bestT = t; best = e; }
       }
       tracers.push([o[0] + d[0] * bestT, o[1] + d[1] * bestT, o[2] + d[2] * bestT]);
-      if (best) this.hurtEnemy(inst, best, ws.damage, conn);
+      if (best) this.blow(conn, inst, best, ws, ws.damage);
     }
     this.toInstance(inst, { t: 'shot', by: conn.id, from: o, to: tracers, c: ws.color, w: weapon.type });
   }
 
-  hurtEnemy(inst, e, dmg, conn) {
+  blow(conn, inst, e, ws, base) {
+    const p = conn.player, { dmg, crit } = strike(ws, base);
+    this.hurtEnemy(inst, e, dmg, conn, crit);
+    if (ws.drain && !p.dead && p.maxHp) p.hp = Math.min(p.maxHp, p.hp + dmg * ws.drain);
+  }
+
+  hurtEnemy(inst, e, dmg, conn, crit = false) {
     e.hp -= dmg;
     e.aggro = true;
     // The whole room wakes up.
     for (const o of inst.enemies.values()) if (Math.hypot(o.x - e.x, o.z - e.z) < 18) o.aggro = true;
-    this.toInstance(inst, { t: 'hit', id: e.id, x: e.x, y: e.size, z: e.z, dmg: Math.round(dmg) });
+    this.toInstance(inst, { t: 'hit', id: e.id, x: e.x, y: e.size, z: e.z, dmg: Math.round(dmg), crit });
     if (e.hp > 0) return;
     inst.enemies.delete(e.id);
     this.toInstance(inst, { t: 'boom', x: e.x, y: e.size * 0.5, z: e.z, size: e.size * (e.boss ? 4 : 2), organic: true });

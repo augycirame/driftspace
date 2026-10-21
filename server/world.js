@@ -367,6 +367,7 @@ export class World {
   on_mech(conn) { this.powers.toggleMech(conn); }
   on_chest(conn, m) { this.bases.chest(conn, m); }
   on_craft(conn, m) { if (typeof m.recipe === 'string') this.bases.craft(conn, m); }
+  on_enhance(conn, m) { if (typeof m.id === 'string') this.bases.enhance(conn, m); }
   on_market_buy(conn, m) { if (typeof m.good === 'string') this.talk.buy(conn, m); }
   on_market_sell(conn, m) { if (typeof m.good === 'string') this.talk.sell(conn, m); }
   on_exchange(conn, m) { if (m.dir === 'buy' || m.dir === 'sell') this.talk.exchange(conn, m); }

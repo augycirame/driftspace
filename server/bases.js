@@ -6,7 +6,7 @@ import { BLOCKS, ORES, TURRET, DOCK_PORT_RANGE, SURFACE_GRID, WORLD_GRID, canAff
 import { sectorOf, sectorKey } from '../shared/universe.js';
 import { townsOf } from '../shared/towns.js';
 import { RECIPES, recipeCost } from '../shared/crafting.js';
-import { makeItem, randomRelic, WEAPON_IDS, ARMOR_SLOT_IDS, MAX_TIER } from '../shared/items.js';
+import { makeItem, randomRelic, rollGrade, enhanceCost, itemName, WEAPON_IDS, ARMOR_SLOT_IDS, MAX_TIER, MAX_PLUS, ENHANCE_CHANCE, GRADES } from '../shared/items.js';
 import { skillLevel, skillBonus } from '../shared/powers.js';
 
 const cellCenter = (cell, grid) => cell.split(',').map((v) => (Number(v) + 0.5) * grid);
@@ -203,14 +203,43 @@ export class Bases {
     // Skilled crafters sometimes make something better than they planned.
     const up = Math.random() < skillBonus(p.skills, 'crafting') ? 1 : 0;
     const t = Math.min(MAX_TIER, tier + up);
+    // The grade rolls like loot, better for skilled crafters; a smith signs their work.
+    const grade = rollGrade(Math.random, Math.min(1, skillBonus(p.skills, 'crafting') * 2));
     let item;
-    if (r.makes === 'weapon') item = makeItem('weapon', WEAPON_IDS.includes(type) ? type : 'rifle', t);
-    else if (r.makes === 'armor') item = makeItem('armor', ARMOR_SLOT_IDS.includes(type) ? type : 'chest', t);
+    if (r.makes === 'weapon') item = makeItem('weapon', WEAPON_IDS.includes(type) ? type : 'rifle', t, grade);
+    else if (r.makes === 'armor') item = makeItem('armor', ARMOR_SLOT_IDS.includes(type) ? type : 'chest', t, grade);
     else if (r.makes === 'mech') item = makeItem('mech', 'mech', t);
     else item = randomRelic();
+    if (item.grade) item.maker = p.name;
     this.w.giveItem(conn, item);
     this.w.powers.gain(conn, 'crafting', 10 * tier);
     if (up) conn.send({ t: 'toast', msg: 'Masterwork! It came out better than planned.', cls: 'loot' });
+    if (item.grade && GRADES[item.grade].affixes >= 2) conn.send({ t: 'toast', msg: `${GRADES[item.grade].name} grade! You forged ${itemName(item)}.`, cls: 'loot' });
+    this.w.dirty = true;
+    this.w.sendSelf(conn);
+  }
+
+  // Enhancement: pay credits and ore for a chance at +1. Past +5 a failure drops a level.
+  enhance(conn, { id }) {
+    const p = conn.player, it = p.inv?.items?.find((i) => i.id === id);
+    if (!it || (it.kind !== 'weapon' && it.kind !== 'armor')) return;
+    if (!this.canCraft(p)) return conn.send({ t: 'toast', msg: 'You need a workbench, a town with a smith, or a station to enhance.' });
+    const plus = it.plus || 0;
+    if (plus >= MAX_PLUS) return conn.send({ t: 'toast', msg: 'This item cannot be enhanced further.' });
+    const cost = enhanceCost(it);
+    if ((p.credits || 0) < cost.credits) return conn.send({ t: 'toast', msg: `Enhancing needs ${cost.credits} credits.` });
+    if (!canAfford(p.cargo, cost.ores)) return conn.send({ t: 'toast', msg: `Missing materials: ${Object.entries(cost.ores).filter(([k, v]) => (p.cargo[k] || 0) < v).map(([k, v]) => `${v - (p.cargo[k] || 0)} ${ORES[k]?.name || k}`).join(', ')}` });
+    p.credits -= cost.credits;
+    for (const [k, v] of Object.entries(cost.ores)) { p.cargo[k] -= v; if (!p.cargo[k]) delete p.cargo[k]; }
+    const luck = skillBonus(p.skills, 'crafting') * 0.3;
+    if (Math.random() < Math.min(1, ENHANCE_CHANCE[plus] + luck)) {
+      it.plus = plus + 1;
+      conn.send({ t: 'toast', msg: `Success! ${itemName(it)}.`, cls: 'loot' });
+      this.w.powers.gain(conn, 'crafting', 6 * it.plus);
+    } else {
+      if (plus >= 5) it.plus = plus - 1;
+      conn.send({ t: 'toast', msg: plus >= 5 ? `The enhancement failed and the item lost a level (+${it.plus}).` : 'The enhancement failed.' });
+    }
     this.w.dirty = true;
     this.w.sendSelf(conn);
   }

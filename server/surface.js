@@ -7,7 +7,7 @@ import {
   standHeight, heightAt, deposits, digOre, landingSpot, vkey, terrainOf, faunaOf, structuresOf, creatureStats, profileOf,
 } from '../shared/planet.js';
 import { BLOCKS, SURFACE_GRID, canAfford, cargoTotal } from '../shared/rules.js';
-import { weaponStats, armorRating, randomItem, randomRelic, makeRelic, godBlessing, PLAYER_HP, RUN_SPEED } from '../shared/items.js';
+import { weaponStats, strike, armorRating, randomItem, randomRelic, makeRelic, godBlessing, PLAYER_HP, RUN_SPEED } from '../shared/items.js';
 import { CREATURES } from '../shared/content/creatures.js';
 import { STRUCTURES } from '../shared/content/structures.js';
 import { GODS, PRAYER } from '../shared/content/factions.js';
@@ -220,8 +220,7 @@ export class Surfaces {
       d[0] /= dl; d[1] /= dl; d[2] /= dl;
       const hit = this.trace(inst, conn, o, d, ws.range);
       tracers.push(hit.point);
-      if (hit.creature) { this.hurtCreature(inst, hit.creature, ws.damage, conn); pw.dealt(conn, ws.damage); }
-      else if (hit.conn) { this.hurtPlayer(hit.conn, ws.damage, p.name); pw.dealt(conn, ws.damage); }
+      if (hit.creature || hit.conn) this.blow(conn, inst, hit, ws, ws.damage);
     }
     this.toPlanet(p.planet, { t: 'shot', by: conn.id, from: o, to: tracers, c: ws.color, w: weapon.type });
   }
@@ -252,7 +251,7 @@ export class Surfaces {
   // A sword swing. Swings in quick succession build a combo; the third is a sword skill: a
   // glowing spin that strikes all around for double damage and more.
   swing(conn, inst, d0, ws, now) {
-    const p = conn.player, pw = this.w.powers;
+    const p = conn.player;
     p.combo = now - (p.lastSwing || 0) < 1100 ? (p.combo || 0) + 1 : 1;
     p.lastSwing = now;
     const skill = p.combo >= 3;
@@ -260,11 +259,7 @@ export class Surfaces {
     const hl = Math.hypot(d0[0], d0[2]) || 1, fwd = [d0[0] / hl, d0[2] / hl];
     const at = [p.px, p.py + 1, p.pz];
     const dmg = ws.damage * (skill ? 2.2 : 1);
-    for (const t of this.inReach(inst, conn, at, fwd, ws.range * (skill ? 1.5 : 1), skill ? -1 : Math.cos(ws.arc / 2))) {
-      if (t.creature) this.hurtCreature(inst, t.creature, dmg, conn);
-      else this.hurtPlayer(t.conn, dmg, p.name);
-      pw.dealt(conn, dmg);
-    }
+    for (const t of this.inReach(inst, conn, at, fwd, ws.range * (skill ? 1.5 : 1), skill ? -1 : Math.cos(ws.arc / 2))) this.blow(conn, inst, t, ws, dmg);
     this.toPlanet(p.planet, { t: 'slash', by: conn.id, x: p.px, y: p.py + 1.1, z: p.pz, dir: fwd, combo: skill ? 3 : p.combo, c: ws.color, reach: ws.range * (skill ? 1.5 : 1) });
   }
 
@@ -287,8 +282,7 @@ export class Surfaces {
         const id = t.creature ? t.creature.id : t.conn.id;
         if ((p.vorpalHit ||= new Set()).has(id)) continue;
         p.vorpalHit.add(id);
-        if (t.creature) this.hurtCreature(inst, t.creature, dmg, conn);
-        else this.hurtPlayer(t.conn, dmg, p.name);
+        this.blow(conn, inst, t, ws, dmg);
       }
     }
     p.vorpalHit = null;
@@ -300,7 +294,16 @@ export class Surfaces {
     conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
   }
 
-  hurtCreature(inst, c, dmg, conn) {
+  // A weapon blow on a creature or player: may crit, and life drain heals the attacker.
+  blow(conn, inst, t, ws, base) {
+    const p = conn.player, { dmg, crit } = strike(ws, base);
+    if (t.creature) this.hurtCreature(inst, t.creature, dmg, conn, crit);
+    else this.hurtPlayer(t.conn, dmg, p.name, crit);
+    this.w.powers.dealt(conn, dmg);
+    if (ws.drain && !p.dead) p.hp = Math.min(p.maxHp, p.hp + dmg * ws.drain);
+  }
+
+  hurtCreature(inst, c, dmg, conn, crit = false) {
     c.hp -= dmg;
     c.aggro = conn.player.key;
     // Hurting one of a town's people brings its armed folk running.
@@ -309,7 +312,7 @@ export class Surfaces {
     }
     // Attacking one soldier makes the whole squad turn on you.
     if (c.faction) for (const o of inst.creatures.values()) if (o.faction === c.faction && Math.hypot(o.x - c.x, o.z - c.z) < 60) o.aggro = conn.player.key;
-    this.toPlanet(inst.planet.id, { t: 'hit', id: c.id, x: c.x, y: c.y + c.size, z: c.z, dmg: Math.round(dmg) });
+    this.toPlanet(inst.planet.id, { t: 'hit', id: c.id, x: c.x, y: c.y + c.size, z: c.z, dmg: Math.round(dmg), crit });
     if (c.hp > 0) return;
     inst.creatures.delete(c.id);
     this.toPlanet(inst.planet.id, { t: 'boom', x: c.x, y: c.y + c.size * 0.5, z: c.z, size: c.size * 2, organic: !c.faction && c.shape !== 'golem' });
@@ -343,7 +346,7 @@ export class Surfaces {
     if (Math.random() < (inst.planet.starter ? 0.08 : 0.25) * luck) this.w.giveItem(conn, randomItem(inst.planet.richness));
   }
 
-  hurtPlayer(conn, dmg, byName) {
+  hurtPlayer(conn, dmg, byName, crit = false) {
     const p = conn.player;
     if (p.dead) return;
     dmg = this.w.powers.absorb(conn, dmg);
@@ -351,7 +354,7 @@ export class Surfaces {
     const taken = dmg * (1 - (p.armor?.reduction || 0));
     p.hp -= taken;
     p.lastHurt = Date.now();
-    this.toPlanet(p.planet, { t: 'hit', id: conn.id, x: p.px, y: p.py + 1.2, z: p.pz, dmg: Math.round(taken) });
+    this.toPlanet(p.planet, { t: 'hit', id: conn.id, x: p.px, y: p.py + 1.2, z: p.pz, dmg: Math.round(taken), crit });
     conn.send({ t: 'you', hp: p.hp });
     if (p.hp > 0) return;
     p.dead = true;

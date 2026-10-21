@@ -4,7 +4,7 @@ import { World } from '../server/world.js';
 import { findPlanet, STARTER_PLANET_ID } from '../shared/universe.js';
 import { townsOf } from '../shared/towns.js';
 import { skillLevel, POWERS, mechStats } from '../shared/powers.js';
-import { makeItem } from '../shared/items.js';
+import { makeItem, weaponStats, armorRating, rollGrade, itemName, itemValue, strike, GRADES } from '../shared/items.js';
 
 process.env.AI_DISABLED = '1';
 const SEED = 99;
@@ -143,6 +143,18 @@ test('bases: claims, beds, chests, crafting and player stations', () => {
   world.bases.craft(conn, { recipe: 'sword', tier: 1, type: 'plasma' });
   assert.equal(p.inv.items.length, items + 1);
   assert.equal(p.inv.items.at(-1).type, 'plasma');
+  assert.equal(p.inv.items.at(-1).maker, 'Builder');
+  assert.ok(GRADES[p.inv.items.at(-1).grade]);
+  // Enhance it: costs credits and iron, +1 at a time.
+  const forged = p.inv.items.at(-1);
+  p.credits = 100000; p.cargo.iron = 1000; p.cargo.silver = 50; p.cargo.mithril = 50;
+  const credits = p.credits;
+  world.on_enhance(conn, { id: forged.id });
+  assert.equal(forged.plus, 1, 'the first levels always succeed');
+  assert.ok(p.credits < credits);
+  for (let i = 0; i < 40; i++) world.on_enhance(conn, { id: forged.id });
+  assert.ok(forged.plus >= 1 && forged.plus <= 10);
+  assert.match(itemName(forged), /^\+\d+ /);
   // A docking port in space makes a station.
   world.surfaces.takeoff(conn);
   p.cargo.iron = 100; p.cargo.copper = 40; p.cargo.gold = 10;
@@ -186,4 +198,26 @@ test('swords: arcs, combos into a sword skill, and Vorpal Strike', () => {
   S.swordSkill(conn, { dir: [0, 0, -1] });
   assert.ok(far.hp < 500);
   assert.ok(p.pz < -7);
+});
+
+test('item grades: rarer gear is stronger, carries bonus stats and a name', () => {
+  let n = 0;
+  const rng = () => { n = (n * 9301 + 49297) % 233280; return n / 233280; };
+  const common = makeItem('weapon', 'blade', 3, 'common', rng);
+  const legend = makeItem('weapon', 'blade', 3, 'legendary', rng);
+  assert.equal(common.affixes.length, 0);
+  assert.equal(legend.affixes.length, 4);
+  assert.equal(new Set(legend.affixes.map((a) => a.id)).size, 4, 'no bonus stat twice');
+  assert.ok(legend.title && itemName(legend) === legend.title);
+  assert.ok(weaponStats(legend).damage > weaponStats(common).damage * 1.5);
+  assert.ok(itemValue(legend) > itemValue(common) * 10);
+  const plus = { ...common, plus: 5 };
+  assert.ok(weaponStats(plus).damage > weaponStats(common).damage * 1.3);
+  const helm = makeItem('armor', 'helmet', 2, 'epic', rng);
+  assert.ok(armorRating({ helmet: helm.id }, [helm]).armor > armorRating({ helmet: 'x' }, [{ ...helm, id: 'x', grade: 'common', affixes: [] }]).armor);
+  // Luck shifts grades up; crits double damage.
+  const count = (luck) => { let k = 0; for (let i = 0; i < 4000; i++) if (rollGrade(rng, luck) !== 'common') k++; return k; };
+  assert.ok(count(1) > count(0));
+  assert.deepEqual(strike({ crit: 1 }, 10), { dmg: 20, crit: true });
+  assert.deepEqual(strike({ crit: 0 }, 10), { dmg: 10, crit: false });
 });

@@ -63,27 +63,28 @@ export class FX {
   }
 
   // A damage number that pops up and floats away: white on enemies, gold for big hits, red on you.
-  damage(x, y, z, dmg, { you = false, scale = 1 } = {}) {
-    const big = dmg >= 40;
+  damage(x, y, z, dmg, { you = false, scale = 1, crit = false } = {}) {
+    const big = dmg >= 40 || crit;
+    const text = crit ? `${dmg}!` : String(dmg);
     const c = document.createElement('canvas');
     c.width = 256; c.height = 96;
     const g = c.getContext('2d');
-    g.font = `900 ${big ? 72 : 60}px system-ui, sans-serif`;
+    g.font = `${crit ? 'italic ' : ''}900 ${crit ? 80 : big ? 72 : 60}px system-ui, sans-serif`;
     g.textAlign = 'center'; g.textBaseline = 'middle';
     g.lineWidth = 10; g.strokeStyle = 'rgba(10,12,24,0.9)';
-    g.strokeText(String(dmg), 128, 50);
+    g.strokeText(text, 128, 50);
     const grad = g.createLinearGradient(0, 18, 0, 82);
-    const [top, bot] = you ? ['#ff8a8a', '#e01a2a'] : big ? ['#fff4b0', '#ffaa20'] : ['#ffffff', '#b8d8ff'];
+    const [top, bot] = you ? ['#ff8a8a', '#e01a2a'] : crit ? ['#ffffff', '#ffcc22'] : big ? ['#fff4b0', '#ffaa20'] : ['#ffffff', '#b8d8ff'];
     grad.addColorStop(0, top); grad.addColorStop(1, bot);
     g.fillStyle = grad;
-    g.fillText(String(dmg), 128, 50);
+    g.fillText(text, 128, 50);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false }));
     s.renderOrder = 999;
     s.position.set(x + (Math.random() - 0.5) * 0.6 * scale, y + 0.4 * scale, z + (Math.random() - 0.5) * 0.6 * scale);
     this.scene.add(s);
-    this.items.push({ obj: s, life: 1.1, max: 1.1, kind: 'number', base: (big ? 1.25 : 0.95) * scale, rise: 1.6 * scale });
+    this.items.push({ obj: s, life: 1.1, max: 1.1, kind: 'number', base: (crit ? 1.6 : big ? 1.25 : 0.95) * scale, rise: 1.6 * scale });
   }
 
   // Hit sparks: bright streaks flying out from the impact, falling and fading.

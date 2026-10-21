@@ -33,6 +33,34 @@ export const ARMOR_SLOTS = {
 };
 export const ARMOR_SLOT_IDS = Object.keys(ARMOR_SLOTS);
 
+// Grades, from common to legendary: stronger base stats and more bonus stats (affixes).
+export const GRADES = {
+  common:    { name: 'Common',    color: '#c8d0dc', mult: 1.0,  affixes: 0, value: 1 },
+  rare:      { name: 'Rare',      color: '#5aa8ff', mult: 1.1,  affixes: 1, value: 2 },
+  epic:      { name: 'Epic',      color: '#b86bff', mult: 1.22, affixes: 2, value: 4 },
+  unique:    { name: 'Unique',    color: '#ffd84a', mult: 1.38, affixes: 3, value: 9 },
+  legendary: { name: 'Legendary', color: '#ff7a2a', mult: 1.6,  affixes: 4, value: 24 },
+};
+export const GRADE_IDS = Object.keys(GRADES);
+export const AFFIXES = {
+  sharp:  { name: 'Sharpness', on: 'weapon', min: 6, max: 16, fmt: (v) => `+${v}% damage` },
+  swift:  { name: 'Swiftness', on: 'weapon', min: 5, max: 14, fmt: (v) => `+${v}% attack speed` },
+  crit:   { name: 'Precision', on: 'weapon', min: 5, max: 16, fmt: (v) => `${v}% critical hits (double damage)` },
+  drain:  { name: 'Life drain', on: 'weapon', min: 3, max: 9, fmt: (v) => `heals ${v}% of damage dealt` },
+  reach:  { name: 'Reach', on: 'weapon', min: 8, max: 22, fmt: (v) => `+${v}% range` },
+  tough:  { name: 'Toughness', on: 'armor', min: 8, max: 24, fmt: (v) => `+${v}% armor` },
+  vital:  { name: 'Vitality', on: 'armor', min: 8, max: 26, fmt: (v) => `+${v} max health` },
+};
+// Enhancement: +1 at a time up to +10, each harder than the last; past +5 a failure costs a level.
+export const MAX_PLUS = 10;
+export const ENHANCE_CHANCE = [1, 1, 0.95, 0.88, 0.8, 0.7, 0.58, 0.46, 0.35, 0.25];
+export const enhanceCost = (it) => {
+  const n = (it.plus || 0) + 1;
+  return { credits: Math.round(60 * Math.pow(n, 1.7) * it.tier), ores: { iron: 6 * n * it.tier, ...(n >= 5 ? { silver: n - 3 } : {}), ...(n >= 8 ? { mithril: n - 6 } : {}) } };
+};
+export const gradeOf = (it) => GRADES[it?.grade] || GRADES.common;
+export const affix = (it, id) => (it?.affixes || []).find((a) => a.id === id)?.v || 0;
+
 export const PLAYER_HP = 100;
 export const PLAYER_SPEED = 11;
 export const RUN_SPEED = 17;
@@ -41,13 +69,27 @@ export function itemName(it) {
   if (it.kind === 'relic') return RELICS[it.type]?.name || 'Unknown relic';
   const tier = TIERS[it.tier].name;
   if (it.kind === 'mech') return `${tier} Mech Frame`;
-  return it.kind === 'weapon' ? `${tier} ${WEAPONS[it.type].name}` : `${tier} ${ARMOR_SLOTS[it.type].name}`;
+  const base = it.kind === 'weapon' ? WEAPONS[it.type].name : ARMOR_SLOTS[it.type].name;
+  const plus = it.plus ? `+${it.plus} ` : '';
+  return it.title ? `${plus}${it.title}` : `${plus}${tier} ${base}`;
 }
+// The color an item's name is shown in: its grade, or for plain items its tier.
+export const itemColor = (it) => (it.grade && it.grade !== 'common' ? GRADES[it.grade].color : TIERS[it.tier]?.color || '#ffffff');
 
 export function weaponStats(it) {
   const w = WEAPONS[it?.type] || WEAPONS.pistol;
-  const m = it ? TIERS[it.tier].mult : 0.8;
-  return { ...w, damage: w.damage * m, range: w.range * (1 + 0.08 * ((it?.tier || 1) - 1)) };
+  const m = (it ? TIERS[it.tier].mult : 0.8) * gradeOf(it).mult * (1 + 0.07 * (it?.plus || 0)) * (1 + affix(it, 'sharp') / 100);
+  return {
+    ...w, damage: w.damage * m, rate: w.rate * (1 + affix(it, 'swift') / 100),
+    range: w.range * (1 + 0.08 * ((it?.tier || 1) - 1)) * (1 + affix(it, 'reach') / 100),
+    crit: affix(it, 'crit') / 100, drain: affix(it, 'drain') / 100,
+  };
+}
+
+// One blow: a critical hit (Precision) doubles the damage.
+export function strike(ws, dmg, rng = Math.random) {
+  const crit = rng() < (ws.crit || 0);
+  return { dmg: crit ? dmg * 2 : dmg, crit };
 }
 
 export function armorRating(equipped, items, buffs = {}) {
@@ -55,7 +97,8 @@ export function armorRating(equipped, items, buffs = {}) {
   for (const slot of ARMOR_SLOT_IDS) {
     const it = items.find((i) => i.id === equipped[slot]);
     if (!it) continue;
-    armor += ARMOR_SLOTS[slot].armor * it.tier * TIERS[it.tier].mult;
+    armor += ARMOR_SLOTS[slot].armor * it.tier * TIERS[it.tier].mult * gradeOf(it).mult * (1 + 0.06 * (it.plus || 0)) * (1 + affix(it, 'tough') / 100);
+    shield += affix(it, 'vital');
     if (it.tier >= 5) shield += 15;
   }
   armor = (armor + (buffs.armor ? 10 : 0)) * (1 + (buffs.armor || 0));
@@ -108,14 +151,43 @@ export function itemValue(it) {
   if (it.kind === 'relic') return 300 * Math.pow(2, (RELICS[it.type]?.rarity || 1) - 1);
   if (it.kind === 'mech') return Math.round(1600 * Math.pow(1.8, it.tier - 1));
   const base = it.kind === 'weapon' ? WEAPONS[it.type].price : ARMOR_SLOTS[it.type].price;
-  return Math.round(base * Math.pow(2.2, it.tier - 1));
+  return Math.round(base * Math.pow(2.2, it.tier - 1) * gradeOf(it).value * (1 + 0.25 * (it.plus || 0)));
 }
 
 let idCounter = 0;
 export const newItemId = () => `i${Date.now().toString(36)}${(idCounter++).toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 
-export function makeItem(kind, type, tier) {
-  return { id: newItemId(), kind, type, tier: Math.max(1, Math.min(MAX_TIER, tier)) };
+export function makeItem(kind, type, tier, grade = 'common', rng = Math.random) {
+  const it = { id: newItemId(), kind, type, tier: Math.max(1, Math.min(MAX_TIER, tier)) };
+  if (kind === 'weapon' || kind === 'armor') {
+    it.grade = GRADES[grade] ? grade : 'common';
+    it.plus = 0;
+    // Bonus stats for the grade, no stat twice.
+    const pool = Object.entries(AFFIXES).filter(([, a]) => a.on === kind).map(([id]) => id);
+    it.affixes = [];
+    for (let i = 0; i < GRADES[it.grade].affixes && pool.length; i++) {
+      const id = pool.splice(Math.floor(rng() * pool.length), 1)[0], a = AFFIXES[id];
+      it.affixes.push({ id, v: Math.round(a.min + (a.max - a.min) * rng()) });
+    }
+    if (it.grade === 'unique' || it.grade === 'legendary') it.title = legendName(it, rng);
+  }
+  return it;
+}
+
+// Grades roll like loot in a game: mostly common, legendary rarely. Luck (crafting skill, deep
+// dungeons) shifts the odds up.
+export function rollGrade(rng = Math.random, luck = 0) {
+  const w = [['common', 60 - luck * 30], ['rare', 25], ['epic', 10 + luck * 12], ['unique', 4 + luck * 9], ['legendary', 1 + luck * 5]];
+  return weightedPick(rng, w.map(([g, x]) => [g, Math.max(0.1, x)]));
+}
+
+// Unique and legendary items carry a name.
+const LEGEND_A = ['Starfall', 'Dawnbreaker', 'Voidsong', 'Emberheart', 'Frostbane', 'Gloam', 'Sunforged', 'Ironvow', 'Stormcaller', 'Nightglass', 'Moonwake', 'Ashen', 'Godslayer', 'Wyrmfang', 'Silverstep', 'Thornwhisper'];
+const LEGEND_B = ['of the Fallen Star', 'of the Hollow King', 'of Seven Winters', 'of the Last Light', 'of the Drowned Moon', 'of the First Smith', 'of Endless Night', 'of the Iron Crown', 'of Vagrant Stars', 'of the Silent Choir'];
+function legendName(it, rng) {
+  const base = (it.kind === 'weapon' ? WEAPONS[it.type].name.split(' ').pop() : ARMOR_SLOTS[it.type].name).replace(/^./, (c) => c.toUpperCase());
+  const a = LEGEND_A[Math.floor(rng() * LEGEND_A.length)], b = LEGEND_B[Math.floor(rng() * LEGEND_B.length)];
+  return it.grade === 'legendary' ? `${a} ${base} ${b}` : `${a} ${base}`;
 }
 
 // Better loot further from home; occasionally one tier above.
@@ -126,8 +198,9 @@ export function lootTier(richness, rng = Math.random) {
 
 export function randomItem(richness, rng = Math.random) {
   const tier = lootTier(richness, rng);
-  if (rng() < 0.5) return makeItem('weapon', weightedPick(rng, [['pistol', 4], ['rifle', 3], ['shotgun', 3], ['plasma', 2], ['railgun', 1], ['blade', 2], ['greatsword', 1]]), tier);
-  return makeItem('armor', pick(rng, ARMOR_SLOT_IDS), tier);
+  const grade = rollGrade(rng, Math.min(1, (richness - 1) / 8));
+  if (rng() < 0.5) return makeItem('weapon', weightedPick(rng, [['pistol', 4], ['rifle', 3], ['shotgun', 3], ['plasma', 2], ['railgun', 1], ['blade', 2], ['greatsword', 1]]), tier, grade, rng);
+  return makeItem('armor', pick(rng, ARMOR_SLOT_IDS), tier, grade, rng);
 }
 
 // What a shop sells: fixed per shop and per day so everyone sees the same stock.

@@ -268,7 +268,7 @@ function onMessage(m) {
       const you = m.id === S.myId;
       if (space_) fx.spark(m.x, m.y, m.z, m.shield ? '#4bd8ff' : '#ffe0a0', 16);
       else fx.burst(m.x, m.y, m.z, m.shield ? '#4bd8ff' : you ? '#ff6a5a' : '#ffd890', 0.5);
-      if (m.dmg > 0) fx.damage(m.x, m.y, m.z, m.dmg, { you, scale: space_ ? 14 : 1 });
+      if (m.dmg > 0) fx.damage(m.x, m.y, m.z, m.dmg, { you, crit: m.crit, scale: space_ ? 14 : 1 });
       break;
     }
     case 'boom': fxNow().explosion(m.x, m.y, m.z, m.size, m.organic ? '#9aff6a' : '#ffb060'); break;
