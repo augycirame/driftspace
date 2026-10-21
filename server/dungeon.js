@@ -123,6 +123,22 @@ export class Dungeons {
     if (now - (p.lastShot || 0) < (1000 / ws.rate) * 0.85) return;
     p.lastShot = now;
     const l = Math.hypot(...dir) || 1;
+    if (ws.melee) {
+      // Swords in the dungeon: an arc in front, every third swing a spin all round.
+      p.combo = now - (p.lastSwing || 0) < 1100 ? (p.combo || 0) + 1 : 1;
+      p.lastSwing = now;
+      const skill = p.combo >= 3;
+      if (skill) p.combo = 0;
+      const hl = Math.hypot(dir[0], dir[2]) || 1, fwd = [dir[0] / hl, dir[2] / hl];
+      const reach = ws.range * (skill ? 1.5 : 1), cosArc = skill ? -1 : Math.cos(ws.arc / 2);
+      for (const e of [...inst.enemies.values()]) {
+        const dx = e.x - p.px, dz = e.z - p.pz, dist = Math.hypot(dx, dz);
+        if (dist > reach + e.size * 0.6 || (dist > 0.4 && (dx * fwd[0] + dz * fwd[1]) / dist < cosArc)) continue;
+        this.hurtEnemy(inst, e, ws.damage * (skill ? 2.2 : 1), conn);
+      }
+      this.toInstance(inst, { t: 'slash', by: conn.id, x: p.px, y: p.py + 1.1, z: p.pz, dir: fwd, combo: skill ? 3 : p.combo, c: ws.color, reach });
+      return;
+    }
     const o = [p.px, p.py + 1.5, p.pz];
     const tracers = [];
     for (let i = 0; i < ws.pellets; i++) {

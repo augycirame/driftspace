@@ -159,3 +159,31 @@ test('black holes pull, burn and fling you across the galaxy', async () => {
   assert.ok(near > far && far > 0);
   assert.deepEqual(gravityAt({ ...hole, type: 'Yellow star' }, 50000, 0, 0), [0, 0, 0]);
 });
+
+test('swords: arcs, combos into a sword skill, and Vorpal Strike', () => {
+  const { world, conn, p, haven } = setup('Swordsman');
+  const S = world.surfaces;
+  const inst = S.instance(haven.id);
+  inst.creatures.clear();
+  p.px = 0; p.pz = 0; p.py = S.ground(haven.id, 0, 0);
+  const blade = makeItem('weapon', 'blade', 1);
+  p.inv.items.push(blade);
+  p.inv.equipped.weapon = blade.id;
+  const mk = (id, x, z) => { const c = { id, x, z, y: p.py, size: 1, hp: 500, maxHp: 500, behavior: 'wild', species: 'rockCrawler' }; inst.creatures.set(id, c); return c; };
+  const front = mk('front', 0, -2), behind = mk('behind', 0, 2);
+  const sent = [];
+  const send0 = conn.send;
+  conn.send = (m) => { sent.push(m); send0?.(m); };
+  S.shoot(conn, { dir: [0, 0, -1] });
+  assert.ok(front.hp < 500, 'the swing hits what is in front');
+  assert.equal(behind.hp, 500, 'but not what is behind');
+  // Two more swings in quick succession: the third is a spin that hits all round.
+  p.lastShot = 0; S.shoot(conn, { dir: [0, 0, -1] });
+  p.lastShot = 0; S.shoot(conn, { dir: [0, 0, -1] });
+  assert.ok(behind.hp < 500, 'the sword skill reaches behind too');
+  // Vorpal Strike lunges forward through what is in the way.
+  const far = mk('far', 0, -6);
+  S.swordSkill(conn, { dir: [0, 0, -1] });
+  assert.ok(far.hp < 500);
+  assert.ok(p.pz < -7);
+});

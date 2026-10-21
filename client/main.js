@@ -272,6 +272,13 @@ function onMessage(m) {
       break;
     }
     case 'boom': fxNow().explosion(m.x, m.y, m.z, m.size, m.organic ? '#9aff6a' : '#ffb060'); break;
+    case 'slash': {
+      fxNow().slash(m);
+      const view = S.you.mode === 'dungeon' ? dungeon : surface;
+      const mesh = m.by === S.myId ? view.selfMesh : view.others?.get(m.by)?.group;
+      mesh?.userData.swing?.(m.combo);
+      break;
+    }
     case 'shot': for (const to of m.to) { if (S.you.mode === 'space') fxNow().tracer(m.from, to, m.c); else fxNow().beam(m.from, to, m.c); } break;
     case 'died': S.dead = true; ui.death(m.by, m.respawnIn); break;
     case 'docked': ui.station(m); break;
@@ -374,6 +381,12 @@ addEventListener('keydown', (e) => {
   if (k === 'o') { ui.current?.kind === 'options' ? ui.close() : ui.options(); return; }
   if (k === 'm') { map.toggle(); return; }
   if (k === 'u') { ui.current?.kind === 'skills' ? ui.close() : ui.skills(); return; }
+  if (k === 'q' && S.you.mode === 'surface' && !overlayOpen()) {
+    // Vorpal Strike: the sword skill lunge.
+    const d = surface.shotDir();
+    send({ t: 'skill', dir: [d.x, d.y, d.z] });
+    return;
+  }
   if (k === 'r' && S.you.mode === 'surface') { ui.current?.kind === 'politics' ? ui.close() : send({ t: 'politics' }); return; }
   if (overlayOpen()) return;
   keys.add(k);

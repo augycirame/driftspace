@@ -689,7 +689,7 @@ export class UI {
         <tr><td>B</td><td>Build structures (left place, right remove, 1-6 block)</td></tr></table>
         <h3>On foot</h3><table>
         <tr><td>WASD / Shift</td><td>Walk / run</td></tr><tr><td>Space</td><td>Jump</td></tr>
-        <tr><td>Left mouse</td><td>Shoot</td></tr><tr><td>Right mouse</td><td>Dig (Shift+right raises ground)</td></tr>
+        <tr><td>Left mouse</td><td>Shoot, or swing a sword (every third swing in a row is a sword skill)</td></tr><tr><td>Q</td><td>Vorpal Strike (with a sword)</td></tr><tr><td>Right mouse</td><td>Dig (Shift+right raises ground)</td></tr>
         <tr><td>E</td><td>Interact / board your ship</td></tr><tr><td>Y</td><td>Shipyard (next to your ship)</td></tr>
         <tr><td>B</td><td>Build blocks</td></tr><tr><td>V</td><td>First / third person</td></tr></table>
         <h3>Anywhere</h3><table>

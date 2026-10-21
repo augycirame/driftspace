@@ -349,6 +349,7 @@ export class World {
   }
 
   on_walk(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.walk(conn, m) : this.surfaces.walk(conn, m); }
+  on_skill(conn, m) { if (conn.player.mode === 'surface') this.surfaces.swordSkill(conn, m); }
   on_shoot(conn, m) { conn.player.mode === 'dungeon' ? this.dungeons.shoot(conn, m) : this.surfaces.shoot(conn, m); }
   on_dig(conn, m) { this.surfaces.dig(conn, m); }
   on_sbuild(conn, m) { this.surfaces.build(conn, m); }

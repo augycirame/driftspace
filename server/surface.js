@@ -211,6 +211,7 @@ export class Surfaces {
     ws.damage *= pw.damageMult(p);
     if (now - (p.lastShot || 0) < 1000 / ws.rate * 0.85) return;
     p.lastShot = now;
+    if (ws.melee) return this.swing(conn, inst, d0, ws, now);
     const o = [p.px, p.py + 1.5, p.pz];
     const tracers = [];
     for (let i = 0; i < ws.pellets; i++) {
@@ -223,6 +224,80 @@ export class Surfaces {
       else if (hit.conn) { this.hurtPlayer(hit.conn, ws.damage, p.name); pw.dealt(conn, ws.damage); }
     }
     this.toPlanet(p.planet, { t: 'shot', by: conn.id, from: o, to: tracers, c: ws.color, w: weapon.type });
+  }
+
+  // Everyone (creatures, and players off safe worlds) a sword reaches: within reach, inside the
+  // arc in front (cosArc -1 is all round), at about the same height.
+  inReach(inst, conn, at, fwd, reach, cosArc) {
+    const p = conn.player, out = [];
+    for (const c of inst.creatures.values()) {
+      const dx = c.x - at[0], dz = c.z - at[2], dist = Math.hypot(dx, dz);
+      if (dist > reach + c.size * 0.6 || Math.abs(c.y + c.size * 0.5 - at[1]) > 2.5 + c.size) continue;
+      if (dist > 0.4 && (dx * fwd[0] + dz * fwd[1]) / dist < cosArc) continue;
+      out.push({ creature: c });
+    }
+    if (!inst.planet.starter) {
+      for (const oc of this.w.conns()) {
+        const q = oc.player;
+        if (oc === conn || q.mode !== 'surface' || q.planet !== p.planet || q.dead || this.w.parties.sameParty(p.key, q.key)) continue;
+        const dx = q.px - at[0], dz = q.pz - at[2], dist = Math.hypot(dx, dz);
+        if (dist > reach + 0.6 || Math.abs(q.py + 1 - at[1]) > 2.5) continue;
+        if (dist > 0.4 && (dx * fwd[0] + dz * fwd[1]) / dist < cosArc) continue;
+        out.push({ conn: oc });
+      }
+    }
+    return out;
+  }
+
+  // A sword swing. Swings in quick succession build a combo; the third is a sword skill: a
+  // glowing spin that strikes all around for double damage and more.
+  swing(conn, inst, d0, ws, now) {
+    const p = conn.player, pw = this.w.powers;
+    p.combo = now - (p.lastSwing || 0) < 1100 ? (p.combo || 0) + 1 : 1;
+    p.lastSwing = now;
+    const skill = p.combo >= 3;
+    if (skill) p.combo = 0;
+    const hl = Math.hypot(d0[0], d0[2]) || 1, fwd = [d0[0] / hl, d0[2] / hl];
+    const at = [p.px, p.py + 1, p.pz];
+    const dmg = ws.damage * (skill ? 2.2 : 1);
+    for (const t of this.inReach(inst, conn, at, fwd, ws.range * (skill ? 1.5 : 1), skill ? -1 : Math.cos(ws.arc / 2))) {
+      if (t.creature) this.hurtCreature(inst, t.creature, dmg, conn);
+      else this.hurtPlayer(t.conn, dmg, p.name);
+      pw.dealt(conn, dmg);
+    }
+    this.toPlanet(p.planet, { t: 'slash', by: conn.id, x: p.px, y: p.py + 1.1, z: p.pz, dir: fwd, combo: skill ? 3 : p.combo, c: ws.color, reach: ws.range * (skill ? 1.5 : 1) });
+  }
+
+  // Vorpal Strike: with a sword in hand, lunge forward, running through everything in the way.
+  swordSkill(conn, { dir }) {
+    const p = conn.player, now = Date.now();
+    if (p.mode !== 'surface' || p.dead || !Array.isArray(dir) || dir.length !== 3 || !dir.every(num)) return;
+    const weapon = p.inv.items.find((i) => i.id === p.inv.equipped.weapon);
+    const ws = weapon && weaponStats(weapon);
+    if (!ws?.melee) return conn.send({ t: 'toast', msg: 'Sword skills need a sword (an energy blade or greatsword).' });
+    if (now - (p.skillAt || 0) < 5000) return conn.send({ t: 'toast', msg: 'Sword skill recharging…' });
+    p.skillAt = now;
+    const inst = this.instance(p.planet);
+    const hl = Math.hypot(dir[0], dir[2]) || 1, fwd = [dir[0] / hl, dir[2] / hl];
+    const from = [p.px, p.py + 1, p.pz], dist = 8, lim = SURFACE_HALF - 5;
+    const dmg = ws.damage * 3 * this.w.powers.damageMult(p);
+    for (let s = 1; s <= 4; s++) {
+      const at = [p.px + fwd[0] * dist * s / 4, p.py + 1, p.pz + fwd[1] * dist * s / 4];
+      for (const t of this.inReach(inst, conn, at, fwd, 1.8, -1)) {
+        const id = t.creature ? t.creature.id : t.conn.id;
+        if ((p.vorpalHit ||= new Set()).has(id)) continue;
+        p.vorpalHit.add(id);
+        if (t.creature) this.hurtCreature(inst, t.creature, dmg, conn);
+        else this.hurtPlayer(t.conn, dmg, p.name);
+      }
+    }
+    p.vorpalHit = null;
+    p.px = Math.max(-lim, Math.min(lim, p.px + fwd[0] * dist));
+    p.pz = Math.max(-lim, Math.min(lim, p.pz + fwd[1] * dist));
+    p.py = this.ground(p.planet, p.px, p.pz);
+    p.lastPos = now;
+    this.toPlanet(p.planet, { t: 'slash', by: conn.id, x: from[0], y: from[1], z: from[2], to: [p.px, p.py + 1, p.pz], dir: fwd, combo: 'vorpal', c: ws.color, reach: dist });
+    conn.send({ t: 'teleport', mode: 'surface', planet: p.planet, x: p.px, y: p.py, z: p.pz });
   }
 
   hurtCreature(inst, c, dmg, conn) {

@@ -345,7 +345,8 @@ export class SurfaceView {
     this.digMarker.renderOrder = 5;
     this.root.add(this.digMarker);
     const me = this.S.you;
-    this.selfMesh = buildPerson(me.color, me.armor?.armor || 0);
+    this.selfWeapon = this.weaponOf(me);
+    this.selfMesh = buildPerson(me.color, me.armor?.armor || 0, this.selfWeapon);
     this.root.add(this.selfMesh);
     this.vel.set(0, 0, 0);
   }
@@ -560,10 +561,15 @@ export class SurfaceView {
   }
 
   // A pilot in their current form: on foot, as a wolf, or in a mech.
-  formMesh(color, armor, wolf, mech) {
+  weaponOf(you) {
+    const w = you?.inv?.items?.find((i) => i.id === you.inv.equipped?.weapon);
+    return w?.type || null;
+  }
+
+  formMesh(color, armor, wolf, mech, weapon = null) {
     if (mech) return buildMech(color, mech);
     if (wolf) return buildWerewolf('#5a4a3a');
-    return buildPerson(color, armor || 0);
+    return buildPerson(color, armor || 0, weapon);
   }
 
   // Spells, powers, transformations and claws, drawn from server messages.
@@ -914,6 +920,14 @@ export class SurfaceView {
     this.updateSky(dt, t);
     if (this.liquid?.material.normalMap) this.liquid.material.normalMap.offset.set(t * 0.01, t * 0.007);
     if ((this.shadowAt = (this.shadowAt || 0) - dt) <= 0 && this.S.gfx?.q.shadows) { this.shadowAt = 0.5; this.shadowize(); }
+    // Drawing a different weapon (a sword or a gun) changes how the pilot is drawn.
+    const wpn = this.weaponOf(S.you);
+    if (wpn !== this.selfWeapon && this.selfMesh.userData.animate) {
+      this.selfWeapon = wpn;
+      this.root.remove(this.selfMesh);
+      this.selfMesh = buildPerson(S.you.color, S.you.armor?.armor || 0, wpn);
+      this.root.add(this.selfMesh);
+    }
     this.selfMesh.position.set(me.x, me.y, me.z);
     this.selfMesh.rotation.y = this.yaw;
     this.selfMesh.visible = !this.firstPerson && !S.dead;
@@ -953,10 +967,10 @@ export class SurfaceView {
       if (o.mode !== 'surface') continue;
       seen.add(o.id);
       let v = this.others.get(o.id);
-      const armorKey = `${Math.round((o.armor || 0) / 20)}|${o.wolf ? 'w' : ''}|${o.mech || 0}`;
+      const armorKey = `${Math.round((o.armor || 0) / 20)}|${o.wolf ? 'w' : ''}|${o.mech || 0}|${o.weapon || ''}`;
       if (!v || v.armorKey !== armorKey) {
         if (v) this.root.remove(v.group);
-        const group = this.formMesh(o.color, o.armor, o.wolf, o.mech);
+        const group = this.formMesh(o.color, o.armor, o.wolf, o.mech, o.weapon);
         const lb = label(o.name + (this.S.isPartyMember(o.key) ? ' ◆' : ''), o.color, 0.8);
         lb.position.y = o.mech ? 5.4 : o.wolf ? 3 : 2.5;
         group.add(lb);

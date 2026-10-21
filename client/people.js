@@ -506,9 +506,25 @@ export function buildModelPerson(o) {
   if (o.bow) put('spine02', new THREE.TorusGeometry(0.45, 0.012, 6, 24, Math.PI * 0.9), wood, -0.05, 0.05, 0.13, 0, 0, 1.4);
   if (o.lute) put('spine02', new THREE.SphereGeometry(0.12, 18, 14).scale(1, 1.3, 0.45), wood, -0.08, 0, 0.15, 0, 0, 0.5);
 
+  // A sword in the right hand: an energy blade (glowing edge) or a greatsword.
+  let sword = null, swingAt = -1, swingKind = 0, swingStart = null;
+  if (o.sword) {
+    sword = new THREE.Group();
+    const big = o.sword === 'greatsword', L = big ? 1.25 : 0.95;
+    const col = big ? '#ffb05a' : '#7ad8ff';
+    const add = (geo, mat, y) => { const m = new THREE.Mesh(geo, mat); m.position.y = y; m.castShadow = true; sword.add(m); };
+    add(new THREE.CylinderGeometry(0.018, 0.02, 0.2, 10), leather('#2a2420'), 0);
+    add(rbox(big ? 0.26 : 0.18, 0.035, 0.05, 0.3), metal('#8a8e96', 0.35), 0.11);
+    add(rbox(big ? 0.075 : 0.045, L, 0.012, 0.3), metal(big ? '#c8ccd2' : '#d8e8f0', 0.2), 0.13 + L / 2);
+    if (!big) add(rbox(0.012, L * 0.98, 0.016, 0.4), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 3, toneMapped: false }), 0.13 + L / 2);
+    add(new THREE.SphereGeometry(0.03, 10, 8), metal('#8a8e96', 0.35), -0.11);
+    g.add(sword);
+    root.userData.swing = (combo) => { swingKind = combo; swingAt = 0; swingStart = null; };
+  }
+
   // The rifle, carried at the low ready.
   let rifle = null;
-  if (o.gun) {
+  if (o.gun && !o.sword) {
     rifle = new THREE.Group();
     const polymer = leather('#1d1f22'), gm = metal('#3a3d42', 0.42);
     const add = (geo, mat, x, y, z, rx = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.x = rx; m.castShadow = true; rifle.add(m); };
@@ -606,7 +622,36 @@ export function buildModelPerson(o) {
       B.foot_L.quaternion.setFromAxisAngle(X, -(-s * 0.38 + kneeL) * 0.8);
       B.foot_R.quaternion.setFromAxisAngle(X, -(s * 0.38 + kneeR) * 0.8);
     }
-    if (rifle) {
+    if (sword) {
+      // En garde, or mid-swing: the hand travels an arc across the body (alternating cuts), a
+      // sword skill spins the whole body round, Vorpal Strike thrusts straight ahead.
+      const chest = modelPos(B.spine02, g);
+      if (swingAt >= 0 && swingStart == null) swingStart = t;
+      const dur = swingKind === 3 ? 0.45 : swingKind === 'vorpal' ? 0.35 : 0.28;
+      const u = swingStart == null ? -1 : (t - swingStart) / dur;
+      if (u >= 1) { swingAt = -1; swingStart = null; }
+      let hand, dir;
+      if (u >= 0 && u < 1 && swingKind === 'vorpal') {
+        const e = Math.sin(Math.min(1, u * 1.6) * Math.PI / 2);
+        hand = chest.clone().add(new THREE.Vector3(0.16, -0.12, -0.25 - 0.35 * e));
+        dir = new THREE.Vector3(0, 0.05, -1);
+      } else if (u >= 0 && u < 1) {
+        const e = 1 - Math.pow(1 - u, 3);
+        const from = 1.25, to = -1.25, side = swingKind === 3 || swingKind % 2 ? 1 : -1;
+        const a = (from + (to - from) * e) * side;
+        hand = chest.clone().add(new THREE.Vector3(Math.sin(a) * 0.45, -0.12 + (side > 0 ? 0.1 - 0.2 * e : -0.1 + 0.2 * e), -Math.cos(a) * 0.42));
+        dir = new THREE.Vector3(Math.sin(a), 0.15, -Math.cos(a));
+        if (swingKind === 3) B.root.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(Y, -Math.PI * 2 * e));
+      } else {
+        hand = chest.clone().add(new THREE.Vector3(0.22, -0.34, -0.2));
+        dir = new THREE.Vector3(0.12, 0.65, -1);
+      }
+      reach(g, B.upperarm01_R, B.lowerarm01_R, B.wrist_R, hand, new THREE.Vector3(0.7, -0.6, 0.2));
+      curl('R', 1);
+      sword.position.copy(modelPos(B.wrist_R, g)).add(new THREE.Vector3(0, -0.06, -0.03));
+      sword.quaternion.setFromUnitVectors(Y, dir.normalize());
+      if (!mixer) { hang('L', s * 0.4, 0.15 + Math.max(0, s) * 0.4); curl('L', 0.35); }
+    } else if (rifle) {
       // Rifle at the low ready in front of the chest; both hands on it.
       // It moves with the chest, so the arms keep their grip as the body sways.
       const chest = modelPos(B.spine02, g), cq = modelQuat(B.spine02, g);

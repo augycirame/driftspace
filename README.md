@@ -177,6 +177,14 @@ and a boss in the deepest room guarding a treasure vault (which usually holds a 
 party enters the same copy of the dungeon together. Difficulty grows the farther the planet is
 from Haven, and a dungeon resets a couple of minutes after everyone has left.
 
+## Swords
+
+Energy blades and greatswords swing in an arc in front of you (left mouse). Swing three times in
+quick succession and the third is a **sword skill**: a glowing spin that strikes everything
+around you for double damage. **Q** is **Vorpal Strike**, a lunge that runs you through
+everything in a line (every 5 seconds). Swords work in dungeons too. Every hit throws sparks
+and a damage number; spells open a magic circle under the caster.
+
 ## Native peoples, towns and realms
 
 Every landable world is inhabited. Humans (the Reachfolk), elves (the Eldar), dwarves (the
@@ -211,6 +219,12 @@ they react within their role: open their shop, offer work, end the conversation,
 gravely insulted, and armed) attack. Good conversations win a little standing. Calls are rate
 limited per player and capped per day (`AI_DAILY_LIMIT`, default 3000); `NPC_MODEL` picks the
 model (default `claude-opus-5-5`). Otherwise NPCs use scripted dialogue.
+
+**Cities.** The capital of a realm with more than one town is a walled city: a paved plaza
+with a fountain, the keep and market stalls; avenues out to three gates; ring streets lined with
+rows of two- to four-storey houses in the people's style (timber and tile, white elven stone,
+dwarven stone with flat roofs, gothic dark stone, clan logs), a guild hall, inns, a temple,
+a smithy, towers, street lamps and trees, and a busy crowd.
 
 **Climate, weather and day.** Worlds are frozen, cold, temperate, humid, arid or scorching, with
 weather that comes and goes: rain, thunderstorms, snow, blizzards, fog, sandstorms and ashfall

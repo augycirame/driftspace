@@ -20,6 +20,9 @@ export const WEAPONS = {
   shotgun: { name: 'Shotgun', damage: 8,  rate: 1.3, range: 30,  spread: 0.09,  pellets: 8, price: 140, color: '#e0b06a' },
   plasma:  { name: 'Plasma',  damage: 32, rate: 2,   range: 80,  spread: 0.01,  pellets: 1, price: 260, color: '#6af0ff' },
   railgun: { name: 'Railgun', damage: 95, rate: 0.6, range: 220, spread: 0,     pellets: 1, price: 420, color: '#ff6ad5' },
+  // Swords: swing in an arc (range is reach); every third swing in a row is a sword skill.
+  blade:   { name: 'Energy blade', damage: 26, rate: 2.6, range: 3.0, arc: 2.2, melee: true, spread: 0, pellets: 1, price: 220, color: '#7ad8ff' },
+  greatsword: { name: 'Greatsword', damage: 52, rate: 1.2, range: 3.8, arc: 2.6, melee: true, spread: 0, pellets: 1, price: 340, color: '#ffb05a' },
 };
 export const WEAPON_IDS = Object.keys(WEAPONS);
 
@@ -123,7 +126,7 @@ export function lootTier(richness, rng = Math.random) {
 
 export function randomItem(richness, rng = Math.random) {
   const tier = lootTier(richness, rng);
-  if (rng() < 0.5) return makeItem('weapon', weightedPick(rng, [['pistol', 4], ['rifle', 3], ['shotgun', 3], ['plasma', 2], ['railgun', 1]]), tier);
+  if (rng() < 0.5) return makeItem('weapon', weightedPick(rng, [['pistol', 4], ['rifle', 3], ['shotgun', 3], ['plasma', 2], ['railgun', 1], ['blade', 2], ['greatsword', 1]]), tier);
   return makeItem('armor', pick(rng, ARMOR_SLOT_IDS), tier);
 }
 

@@ -9,6 +9,7 @@ import { buildModelPerson, loadPeople, peopleReady, lookFrom } from './people.js
 import { SHIP_PARTS, SHIP_BLOCK } from '/shared/rules.js';
 import { mulberry32 } from '/shared/rng.js';
 import { PEOPLES } from '/shared/content/peoples.js';
+import { WEAPONS } from '/shared/items.js';
 
 const box = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
 
@@ -604,7 +605,8 @@ function modelOr(opts, fallback) {
   return wrap;
 }
 
-function buildRealPerson(color, armor, toon = false) {
+function buildRealPerson(color, armor, toon = false, weapon = null) {
+  const sword = WEAPONS[weapon]?.melee ? weapon : null;
   const suit = new THREE.Color(color);
   const hsl = {}; suit.getHSL(hsl);
   suit.setHSL(hsl.h, Math.min(hsl.s, 0.35), 0.32);
@@ -612,7 +614,7 @@ function buildRealPerson(color, armor, toon = false) {
   const look = lookFrom(Array.from(String(color)).reduce((h, ch) => Math.imul(h ^ ch.charCodeAt(0), 16777619), 2166136261));
   return modelOr({
     female, skin: look.skin, hair: look.hair, eyes: look.eyes, melanin: look.melanin, flush: look.flush, freckles: look.freckles, hairStyle: female ? (look.r() < 0.5 ? 'ponytail' : 'bun') : 'crop', build: look.build, stubble: female ? 0 : 0.35,
-    top: suit, pants: suit, boots: '#2a2622', gloves: '#24221f', gloved: true, suit: true, strap: '#2c2c28', sleeve: 0.79, pantLen: 0.86, bootTop: 0.62, gun: true, armor,
+    top: suit, pants: suit, boots: '#2a2622', gloves: '#24221f', gloved: true, suit: true, strap: '#2c2c28', sleeve: 0.79, pantLen: 0.86, bootTop: 0.62, gun: !sword, sword, armor,
     height: female ? 1.0 : 1.03, toon,
   }, () => (toon ? buildAnimePerson(color, armor) : buildRealHumanPilot(suit, color, armor, female)));
 }
@@ -624,9 +626,9 @@ function buildRealHumanPilot(suit, color, armor, female) {
   });
 }
 
-export function buildPerson(color, armor = 0) {
+export function buildPerson(color, armor = 0, weapon = null) {
   if (animeMode === 'chibi') return buildChibiPerson(color, armor);
-  if (animeMode === 'anime' || realism()) return buildRealPerson(color, armor, animeMode === 'anime');
+  if (animeMode === 'anime' || realism()) return buildRealPerson(color, armor, animeMode === 'anime', weapon);
   if (animeMode) return buildAnimePerson(color, armor);
   const g = new THREE.Group();
   const suit = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.2 });

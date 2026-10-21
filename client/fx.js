@@ -144,6 +144,29 @@ export class FX {
     this.items.push({ obj: m, life: 1.3, max: 1.3, kind: 'circle' });
   }
 
+  // A sword's slash: a glowing arc in front of the swordsman (all round for a sword skill),
+  // or for Vorpal Strike a streak along the lunge.
+  slash(m) {
+    if (m.combo === 'vorpal' && m.to) {
+      this.beam([m.x, m.y, m.z], m.to, m.c, 0.12);
+      this.burst(m.to[0], m.to[1], m.to[2], m.c, 0.8);
+      return;
+    }
+    const skill = m.combo === 3, reach = m.reach || 3;
+    const arc = skill ? Math.PI * 2 : 2.3;
+    const mid = Math.atan2(-m.dir[1], m.dir[0]);
+    const grp = new THREE.Group();
+    const ring = (r0, r1, color, o) => new THREE.Mesh(new THREE.RingGeometry(r0, r1, 40, 1, mid - arc / 2, arc).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: o, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    grp.add(ring(reach * 0.45, reach, m.c, 0.55), ring(reach * 0.88, reach * 0.97, '#ffffff', 0.9));
+    grp.position.set(m.x, m.y, m.z);
+    // Alternate swings tilt one way then the other, like real cuts.
+    grp.rotation.z = skill ? 0 : (m.combo % 2 ? 0.25 : -0.25);
+    this.scene.add(grp);
+    this.items.push({ obj: grp, life: skill ? 0.45 : 0.24, max: skill ? 0.45 : 0.24, kind: 'slash', skill });
+    if (skill) this.circle(m.x, m.y - 1.05, m.z, m.c, reach * 1.1);
+  }
+
   update(dt) {
     for (const it of this.items) {
       it.life -= dt;
@@ -179,6 +202,12 @@ export class FX {
         }
         p.needsUpdate = true;
         it.obj.material.opacity = k;
+      } else if (it.kind === 'slash') {
+        const age = 1 - k;
+        const sc = 0.75 + age * (it.skill ? 0.6 : 0.35);
+        it.obj.scale.set(sc, 1, sc);
+        if (it.skill) it.obj.rotation.y += dt * 9;
+        it.obj.children.forEach((c, i) => { c.material.opacity = k * (i ? 0.9 : 0.55); });
       } else if (it.kind === 'beam') {
         it.obj.children.forEach((c, i) => { c.material.opacity = k * (i ? 0.45 : 1); });
       } else if (it.kind === 'circle') {
@@ -191,7 +220,7 @@ export class FX {
       if (it.life <= 0) {
         this.scene.remove(it.obj);
         if (it.kind === 'burst' || it.kind === 'line' || it.kind === 'streaks' || it.kind === 'circle') it.obj.geometry.dispose();
-        if (it.kind === 'beam') it.obj.children.forEach((c) => { c.geometry.dispose(); c.material.dispose(); });
+        if (it.kind === 'beam' || it.kind === 'slash') it.obj.children.forEach((c) => { c.geometry.dispose(); c.material.dispose(); });
         else { it.obj.material.map?.isCanvasTexture && it.kind === 'number' && it.obj.material.map.dispose(); it.obj.material.dispose(); }
       }
     }
