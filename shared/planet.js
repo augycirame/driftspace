@@ -152,6 +152,8 @@ function pads(planet) {
     const water = profileOf(planet).water;
     list = townsOf(planet).map((t) => ({ x: t.x, z: t.z, r: t.radius + 10, h: Math.max(rawHeight(planet, t.x, t.z), water != null ? water + 1.5 : -1e9) }));
     for (const st of structuresOf(planet)) list.push({ x: st.x, z: st.z, r: st.radius + 4, h: rawHeight(planet, st.x, st.z) });
+    const sp = spireOf(planet);
+    if (sp) list.push({ x: sp.x, z: sp.z, r: SPIRE_RADIUS + 8, h: rawHeight(planet, sp.x, sp.z) });
     remember(padCache, planet.id, list);
   }
   return list;
@@ -250,6 +252,24 @@ export function landingSpot(planet) {
   return planet.starter ? [0, 34] : [0, 0];
 }
 
+// The Spire: a tower of floors on Haven, each with a floor boss. It stands on open ground away
+// from Haven Landing and the towns.
+export const SPIRE_RADIUS = 16;
+const spireCache = new Map();
+export function spireOf(planet) {
+  if (!planet.starter) return null;
+  let s = spireCache.get(planet.id);
+  if (s) return s;
+  const towns = townsOf(planet);
+  s = { x: 0, z: -150 };
+  for (let k = 0; k < 64; k++) {
+    const a = -Math.PI / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.35, d = 140 + Math.floor(k / 18) * 60;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (towns.every((t) => Math.hypot(t.x - x, t.z - z) > t.radius + SPIRE_RADIUS + 30)) { s = { x, z }; break; }
+  }
+  return remember(spireCache, planet.id, s);
+}
+
 // Haven Landing: the settlement where every new pilot starts.
 export const SETTLEMENT = {
   buildings: [
@@ -272,7 +292,7 @@ export function floraFor(planet, tx, tz) {
   const main = p.flora[0][0];
   const n = Math.round((FLORA_COUNT[main] || 3) * (p.density ?? 1));
   const out = [];
-  const structs = structuresOf(planet), towns = townsOf(planet);
+  const structs = structuresOf(planet), towns = townsOf(planet), spire = spireOf(planet);
   for (let i = 0; i < n; i++) {
     const x = tx * 40 + rng() * 40, z = tz * 40 + rng() * 40;
     const kind = pickWeighted(rng, p.flora);
@@ -281,6 +301,7 @@ export function floraFor(planet, tx, tz) {
     if (Math.max(Math.abs(x), Math.abs(z)) > SURFACE_HALF - 30) continue;
     if (structs.some((st) => Math.hypot(st.x - x, st.z - z) < st.radius + 5)) continue;
     if (towns.some((t) => Math.hypot(t.x - x, t.z - z) < t.radius + 12)) continue;
+    if (spire && Math.hypot(spire.x - x, spire.z - z) < SPIRE_RADIUS + 14) continue;
     out.push({ x, z, s, r, kind, v });
   }
   return out;

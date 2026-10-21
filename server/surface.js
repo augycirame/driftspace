@@ -499,6 +499,7 @@ export class Surfaces {
     }
     if (what === 'structure') return this.useStructure(conn, inst, id);
     if (what === 'guild') return this.w.guild.open(conn);
+    if (what === 'spire') return this.w.tower.open(conn);
     if (what === 'npc') {
       const c = inst.creatures.get(id);
       if (!c || c.behavior !== 'native' || !near(c.x, c.z, 6)) return;

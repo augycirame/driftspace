@@ -12,7 +12,7 @@ import { buildShip, buildPerson, buildCreature, buildStructure, buildNative, bui
 import { RANKS } from '/shared/guild.js';
 import { townsOf, townFootprints, insideFootprint, sunAt, weatherAt, weatherInfo } from '/shared/towns.js';
 import { buildTown, realmColor } from './towns.js';
-import { gravityOf } from '/shared/planet.js';
+import { gravityOf, spireOf, SPIRE_RADIUS } from '/shared/planet.js';
 import { realism, physicalSky, skyColors, SkyEnvironment, terrainMaterial, waterMaterial, GrassField, treeModels, treeMaterials, rockGeometry, realSurface, realBlock } from './realism.js';
 import { climateOf } from '/shared/towns.js';
 import { CREATURES } from '/shared/content/creatures.js';
@@ -333,7 +333,7 @@ export class SurfaceView {
     this.drift = anime ? animeDrift(planet, this.S.gfx.style) : null;
     if (this.drift) this.root.add(this.drift);
     this.buildDeposits();
-    if (planet.starter) this.buildSettlement();
+    if (planet.starter) { this.buildSettlement(); this.buildSpire(); }
     this.buildRelic();
     this.buildStructures();
     this.buildTowns();
@@ -805,6 +805,63 @@ export class SurfaceView {
     this.root.add(this.beaconLight);
   }
 
+  // The Spire: a pale stone tower rising out of sight, banded with a glowing ring at every floor,
+  // a great gate at its foot and a crystal crown at the top.
+  buildSpire() {
+    const sp = spireOf(this.planet);
+    if (!sp) return;
+    this.spire = sp;
+    const g = new THREE.Group(), y0 = heightAt(this.planet, sp.x, sp.z, this.data.digs);
+    g.position.set(sp.x, y0, sp.z);
+    const stone = new THREE.MeshStandardMaterial({ color: '#b8bcc8', roughness: 0.75, metalness: 0.05, flatShading: true });
+    const dark = new THREE.MeshStandardMaterial({ color: '#4a5060', roughness: 0.9, flatShading: true });
+    const glow = new THREE.MeshStandardMaterial({ color: '#8fe6ff', emissive: '#4fd0ff', emissiveIntensity: 2.2, toneMapped: false });
+    const add = (geo, mat, y = 0) => { const m = new THREE.Mesh(geo, mat); m.position.y = y; m.castShadow = m.receiveShadow = true; g.add(m); return m; };
+    // Plinth and steps.
+    add(new THREE.CylinderGeometry(SPIRE_RADIUS + 2, SPIRE_RADIUS + 4, 3, 12), dark, 0.5);
+    add(new THREE.CylinderGeometry(SPIRE_RADIUS, SPIRE_RADIUS + 1.5, 3, 12), stone, 3);
+    // The tower: tapering octagonal sections, each a floor, with a ring of light between them.
+    let y = 4.5, r = SPIRE_RADIUS - 3;
+    for (let i = 0; i < 14; i++) {
+      const h = 11 - i * 0.25, r2 = r * 0.94;
+      add(new THREE.CylinderGeometry(r2, r, h, 8), stone, y + h / 2);
+      add(new THREE.TorusGeometry(r2 + 0.15, 0.28, 6, 8).rotateX(Math.PI / 2).rotateY(Math.PI / 8), glow, y + h);
+      // Buttresses on the lower floors.
+      if (i < 4) for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2 + Math.PI / 8, b = add(new THREE.BoxGeometry(1.4, h, 2.4), dark, y + h / 2);
+        b.position.x = Math.cos(a) * (r * 0.97); b.position.z = Math.sin(a) * (r * 0.97); b.rotation.y = -a;
+      }
+      y += h; r = r2;
+    }
+    // Crown: a floating crystal and a pillar of light into the sky.
+    const crystal = add(new THREE.OctahedronGeometry(4, 0), glow, y + 9);
+    crystal.scale.y = 1.8;
+    this.spireCrystal = crystal;
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 2.4, 400, 12, 1, true), new THREE.MeshBasicMaterial({ color: '#8fe6ff', transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.y = y + 210;
+    g.add(beam);
+    g.add(glowSprite('#8fe6ff', 30, 0.8).translateY(y + 9));
+    // The gate, facing Haven Landing.
+    const face = Math.atan2(-sp.x, -sp.z);
+    const gate = new THREE.Group();
+    gate.rotation.y = face;
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.7, 8, 16, Math.PI), stone);
+    arch.position.set(0, 9.5, SPIRE_RADIUS - 2.4);
+    gate.add(arch);
+    for (const sx of [-1, 1]) { const p = new THREE.Mesh(new THREE.BoxGeometry(1.4, 6, 1.4), stone); p.position.set(sx * 3.6, 7.5, SPIRE_RADIUS - 2.4); gate.add(p); }
+    const portal = new THREE.Mesh(new THREE.CircleGeometry(3.2, 24, 0, Math.PI), new THREE.MeshBasicMaterial({ color: '#4fd0ff', transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }));
+    portal.position.set(0, 9.5, SPIRE_RADIUS - 2.5);
+    const door = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 5), portal.material);
+    door.position.set(0, 7, SPIRE_RADIUS - 2.5);
+    gate.add(portal, door);
+    g.add(gate);
+    const lb = label('The Spire', '#8fe6ff', 1.6);
+    lb.position.y = 16;
+    lb.position.x = Math.sin(face) * (SPIRE_RADIUS + 2); lb.position.z = Math.cos(face) * (SPIRE_RADIUS + 2);
+    g.add(lb);
+    this.root.add(g);
+  }
+
   buildRelic() {
     this.relic = null;
     const site = this.S.story?.relics?.find((r) => r.planet === this.planetId);
@@ -869,6 +926,7 @@ export class SurfaceView {
   }
 
   blockedAt(x, z, feet) {
+    if (this.spire && Math.hypot(this.spire.x - x, this.spire.z - z) < SPIRE_RADIUS - 2.5) return true;
     for (const t of this.towns || []) {
       if (Math.abs(t.x - x) > t.radius + 8 || Math.abs(t.z - z) > t.radius + 8) continue;
       for (const f of this.footprints) if (insideFootprint(f, x, z, 0.35) && feet < this.groundAt0(f) + 6) return true;
@@ -949,6 +1007,7 @@ export class SurfaceView {
       tail.rotation.x = -0.5 - Math.min(0.9, moving * 0.12) + Math.sin(t * 6 + i * 1.7) * (0.08 + moving * 0.02);
     }
     if (this.beaconLight) this.beaconLight.material.opacity = 0.5 + 0.5 * Math.sin(t * 3);
+    if (this.spireCrystal) this.spireCrystal.rotation.y = t * 0.6;
     if (this.relic) for (const [i, r] of this.relic.userData.rings.entries()) r.rotation.set(t * (0.5 + i * 0.3), t * 0.4, 0);
     for (const g of this.depositMeshes.values()) g.rotation.y = t * 0.3;
 
@@ -1165,6 +1224,7 @@ export class SurfaceView {
     const parked = this.S.you.parked;
     if (this.planet.starter && near(SETTLEMENT.warden.x, SETTLEMENT.warden.z, 7)) return { what: 'warden', text: `E: talk to ${SETTLEMENT.warden.name}` };
     if (this.planet.starter && near(SETTLEMENT.vendor.x, SETTLEMENT.vendor.z, 7)) return { what: 'vendor', text: `E: trade with ${SETTLEMENT.vendor.name}` };
+    if (this.spire && near(this.spire.x, this.spire.z, SPIRE_RADIUS + 8)) return { what: 'spire', text: 'E: enter the Spire' };
     if (this.relic && near(this.relic.position.x, this.relic.position.z, 7)) return { what: 'relic', text: this.relic.userData.site.found ? 'The relic is awake.' : 'E: awaken the Precursor Relic' };
     let bestN = null, bd = 4.5;
     for (const c of this.S.creatures.values()) {

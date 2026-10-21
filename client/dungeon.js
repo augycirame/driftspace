@@ -199,7 +199,7 @@ export class DungeonView {
         bar.position.y = c.size * tall + 0.5;
         group.add(bar);
         if (c.boss) {
-          const lb = label(def.name, '#ff8a7a', 1.1);
+          const lb = label(c.name || def.name, c.name ? '#ffb0a0' : '#ff8a7a', c.name ? 1.4 : 1.1);
           lb.position.y = c.size * tall + 1.4;
           group.add(lb);
           group.add(glowSprite('#ff5a4a', c.size * 5, 0.25));
@@ -276,7 +276,7 @@ export class DungeonView {
   interaction() {
     const me = this.S.me, d = this.layout;
     const near = (x, z, r) => Math.hypot(me.x - x, me.z - z) <= r;
-    if (near(d.start[0], d.start[1], 5)) return { what: 'exit', text: 'E: climb back to the surface' };
+    if (near(d.start[0], d.start[1], 5)) return { what: 'exit', text: this.msg?.floor ? 'E: leave the Spire' : 'E: climb back to the surface' };
     for (const c of d.chests) {
       if (!near(c.x, c.z, 3)) continue;
       if (this.opened.has(c.id)) return { what: 'chest', id: c.id, text: 'Empty chest' };

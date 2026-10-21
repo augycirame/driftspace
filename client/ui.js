@@ -286,6 +286,33 @@ export class UI {
     });
   }
 
+  // A floor boss's health: several stacked bars that empty one after another, as in the stories.
+  bossBar(c) {
+    const el = $('bossbar');
+    if (!c) { el.hidden = true; return; }
+    el.hidden = false;
+    const BARS = 4, f = Math.max(0, c.hp / c.maxHp) * BARS, left = Math.ceil(f), cur = f - Math.floor(f) || (f > 0 ? 1 : 0);
+    const html = `<div class="bossname">${esc(c.name)}${c.phase ? ` <span class="enraged">${c.phase > 1 ? 'DESPERATE' : 'ENRAGED'}</span>` : ''}</div>` +
+      `<div class="bossbars"><div class="bosshp" style="width:${(cur * 100).toFixed(1)}%"></div></div>` +
+      `<div class="bosspips">${Array.from({ length: BARS }, (_, i) => `<span class="${i < left - 1 ? 'on' : ''}"></span>`).join('')}</div>`;
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
+  // The Spire's floor list: climb any floor up to the front line.
+  tower(m) {
+    this.open('tower', 'The Spire', (body) => {
+      const p = document.createElement('p');
+      p.className = 'small';
+      p.innerHTML = `Front line: <b style="color:#8fe6ff">Floor ${m.frontier}</b>. Each floor is a labyrinth with a floor boss at its heart. The first party to clear the front line opens the next floor for everyone, and whoever lands the killing blow takes the <b>Last Attack bonus</b>. Bring a party: bosses grow stronger with every fighter, but not as fast as you do.${m.best ? ` Your highest clear: floor ${m.best}.` : ''}`;
+      body.appendChild(p);
+      for (const f of [...m.floors].reverse()) {
+        const b = this.button(f.floor === m.frontier ? 'Challenge' : 'Enter', () => { this.close(); this.send({ t: 'tower_enter', floor: f.floor }); }, f.floor === m.frontier ? '' : 'alt');
+        const status = f.cleared ? `<span class="good">Cleared</span> by ${esc(f.cleared.by)}` : '<span style="color:#ff8a7a">Front line: not yet cleared</span>';
+        body.appendChild(this.row(`<b>Floor ${f.floor}</b> · ${esc(f.boss)}<br><span class="small">${status}</span>`, b));
+      }
+    });
+  }
+
   // The Mercenary Guild's contract board, with your guild card on top.
   guild(m) {
     this.guildView = m;
@@ -805,6 +832,7 @@ export class UI {
     if (now - this.hudAt < 120) return;
     this.hudAt = now;
     const S = this.S, you = S.you, me = S.me;
+    if (you.mode !== 'dungeon') $('bossbar').hidden = true;
     let where, sub;
     if (you.mode === 'space') {
       const [sx, sz] = sectorOf(me.x, me.z);
@@ -816,8 +844,8 @@ export class UI {
         `<div class="dim">Jump ${ctx.jumpLeft ? 'charging ' + Math.ceil(ctx.jumpLeft / 1000) + 's' : 'ready'} · range ${you.stats.jumpRange}</div>`;
     } else if (you.mode === 'dungeon' && ctx.dungeon) {
       const dg = ctx.dungeon;
-      where = `<div class="big">${esc(dg.name)}</div><div class="dim">Depth ${dg.depth} · underground</div>`;
-      sub = `<div>${dg.boss ? '<span class="good">The boss is dead</span>' : `<span style="color:#ff8a7a">${dg.left} monsters remain</span>`}</div>`;
+      where = `<div class="big">${esc(dg.name)}</div><div class="dim">${dg.floor ? 'Labyrinth' : `Depth ${dg.depth} · underground`}</div>`;
+      sub = `<div>${dg.boss ? `<span class="good">${dg.floor ? 'Floor cleared!' : 'The boss is dead'}</span>` : `<span style="color:#ff8a7a">${dg.left} monsters remain</span>`}</div>`;
     } else {
       const p = findPlanet(you.planet, S.seed);
       where = `<div class="big">${esc(p.name)}</div><div class="dim">${TERRAINS[terrainOfPlanet(p)].name}${p.starter ? ' · starter planet' : p.holy ? ' · Holy Capital' : ''}</div>`;

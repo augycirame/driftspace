@@ -183,3 +183,14 @@ input:focus { border-color: var(--holo-strong); box-shadow: 0 0 8px rgba(var(--h
   border: 2px solid var(--rc); background: rgba(0, 0, 0, 0.35); text-shadow: 0 0 12px var(--rc); box-shadow: 0 0 16px -4px var(--rc), inset 0 0 14px -6px var(--rc);
   clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); }
 .rankchip { display: inline-block; min-width: 20px; padding: 0 5px; text-align: center; font-weight: 900; color: var(--rc); border: 1px solid var(--rc); border-radius: 2px; text-shadow: 0 0 6px var(--rc); }
+
+/* A floor boss's health bar across the top of the screen. */
+#bossbar { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); width: min(560px, 80vw); z-index: 5; pointer-events: none; text-align: center; }
+#bossbar .bossname { font: 800 15px system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; color: #ffd0c8; text-shadow: 0 0 8px rgba(255, 60, 40, 0.8); margin-bottom: 4px; }
+#bossbar .enraged { color: #ff3a2a; font-size: 11px; margin-left: 6px; animation: holo-blink 0.8s steps(2) infinite; }
+@keyframes holo-blink { 50% { opacity: 0.3; } }
+#bossbar .bossbars { height: 12px; background: rgba(40, 6, 6, 0.75); border: 1px solid rgba(255, 90, 70, 0.7); transform: skewX(-18deg); overflow: hidden; box-shadow: 0 0 12px rgba(255, 50, 30, 0.4); }
+#bossbar .bosshp { height: 100%; background: linear-gradient(180deg, #ff8a5a, #d81e10 60%, #8a0a06); transition: width 0.25s; }
+#bossbar .bosspips { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; }
+#bossbar .bosspips span { width: 18px; height: 5px; background: rgba(255, 255, 255, 0.12); transform: skewX(-18deg); }
+#bossbar .bosspips span.on { background: #ff5a3a; box-shadow: 0 0 6px #ff5a3a; }

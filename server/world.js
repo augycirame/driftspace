@@ -29,6 +29,7 @@ import { Politics } from './politics.js';
 import { Talk } from './talk.js';
 import { Quests } from './quests.js';
 import { Guild } from './guild.js';
+import { Tower } from './tower.js';
 import { rankOf } from '../shared/guild.js';
 import { AI } from './ai.js';
 import { Powers } from './powers.js';
@@ -60,6 +61,7 @@ export class World {
     this.talk = new Talk(this);
     this.quests = new Quests(this);
     this.guild = new Guild(this);
+    this.tower = new Tower(this);
     this.powers = new Powers(this);
     this.bases = new Bases(this);
     this.director = new Director(this);
@@ -210,7 +212,7 @@ export class World {
       rep: { empire: 0, rebellion: 0, ...rec.rep }, favor: { ...rec.favor }, blessing: rec.blessing || null,
       looted: { ...rec.looted }, codex: { ...rec.codex }, lastPray: rec.lastPray || 0,
       standing: { ...rec.standing }, coins: { ...rec.coins }, goods: { ...rec.goods },
-      quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, guild: rec.guild ? JSON.parse(JSON.stringify(rec.guild)) : null, charm: { ...rec.charm },
+      quests: (rec.quests || []).map((q) => JSON.parse(JSON.stringify(q))), questsDone: rec.questsDone || 0, spire: rec.spire || 0, guild: rec.guild ? JSON.parse(JSON.stringify(rec.guild)) : null, charm: { ...rec.charm },
       bed: rec.bed || null, skills: { ...rec.skills }, spells: [...(rec.spells || [])], power: rec.power || null, curse: rec.curse || null, energy: rec.energy ?? 100, mana: rec.mana,
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, q: [0, 0, 0, 1], px: 0, py: 0, pz: 0, yaw: 0,
       mining: null, mineFrac: 0, lastPos: Date.now(), lastJump: 0, lastFire: 0, lastWarp: 0,
@@ -242,7 +244,7 @@ export class World {
       credits: p.credits, cargo: p.cargo, ship: p.ship, upg: p.upg, inv: p.inv, tutorial: p.tutorial, tutCount: p.tutCount,
       home: p.home, kills: p.kills, mode: p.dead && p.mode === 'space' ? 'space' : p.mode,
       rep: p.rep, favor: p.favor, blessing: p.blessing, looted: p.looted, codex: p.codex, lastPray: p.lastPray,
-      standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, guild: p.guild, charm: p.charm,
+      standing: p.standing, coins: p.coins, goods: p.goods, quests: p.quests, questsDone: p.questsDone, spire: p.spire, guild: p.guild, charm: p.charm,
       bed: p.bed, skills: p.skills, spells: p.spells, power: p.power, curse: p.curse, energy: p.energy, mana: p.mana,
       x: p.x, y: p.y, z: p.z, q: p.q, planet: p.planet, parked: p.parked,
     });
@@ -365,6 +367,7 @@ export class World {
   on_talk_say(conn, m) { if (typeof m.id === 'string') this.talk.say(conn, m).catch((e) => this.log('talk error', e)); }
   on_quest_abandon(conn, m) { if (typeof m.id !== 'string') return; if (conn.player.guild?.contracts.some((c) => c.id === m.id)) this.guild.abandon(conn, m); else this.quests.abandon(conn, m); }
   on_guild(conn) { this.guild.open(conn); }
+  on_tower_enter(conn, m) { if (typeof m.floor === 'number') this.tower.enter(conn, m); }
   on_guild_accept(conn, m) { if (typeof m.key === 'string') this.guild.accept(conn, m); }
   on_guild_turnin(conn, m) { if (typeof m.id === 'string') this.guild.turnIn(conn, m); }
   on_cast(conn, m) { if (typeof m.spell === 'string') this.powers.cast(conn, m); }

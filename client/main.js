@@ -298,6 +298,7 @@ function onMessage(m) {
     case 'quests': S.quests = m.list; ui.refresh(); break;
     case 'politics': ui.politics(m.view); break;
     case 'guild': ui.guild(m); break;
+    case 'tower': ui.tower(m); break;
     case 'story': {
       const hadGate = S.effects?.gateBuilt;
       S.story = m.story;
@@ -634,7 +635,11 @@ function dungeonFrame(dt, now) {
   dots.push(dot(dungeon.layout.start[0], dungeon.layout.start[1], '#78ffaa', 7));
   for (const o of S.others.values()) dots.push(dot(o.x, o.z, o.color, 4));
   ui.radar(radarCtx, dots);
-  ui.hud(now, { prompt, hint: 'LMB shoot · E interact · V view · Shift run · H help', dungeon: { name: dungeon.msg.name, depth: dungeon.msg.depth, left: S.creatures.size, boss: dungeon.bossDead } });
+  ui.hud(now, { prompt, hint: 'LMB shoot · E interact · V view · Shift run · H help', dungeon: { name: dungeon.msg.name, depth: dungeon.msg.depth, floor: dungeon.msg.floor, left: S.creatures.size, boss: dungeon.bossDead } });
+  // A floor boss in the fight gets the big health bar across the top of the screen.
+  let boss = null;
+  for (const c of S.creatures.values()) if (c.name && (c.aggro || Math.hypot(c.x - me.x, c.z - me.z) < 30)) boss = c;
+  ui.bossBar(boss);
 }
 
 // Missile lock: T cycles through targets in front of you, nearest to the crosshair first.

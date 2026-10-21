@@ -192,6 +192,16 @@ around you for double damage. **Q** is **Vorpal Strike**, a lunge that runs you 
 everything in a line (every 5 seconds). Swords work in dungeons too. Every hit throws sparks
 and a damage number; spells open a magic circle under the caster.
 
+## The Spire
+
+A pale tower rises over Haven, a short walk from Haven Landing. Each of its floors (up to 100) is a
+labyrinth with a named **floor boss** at its heart. Walk up to the gate and press E to pick a floor
+up to the **front line**, the highest floor anyone has opened. Floor bosses grow with the party that
+fights them, **enrage** at half health and call guards, and at a quarter unleash shockwaves. The
+first party to clear the front line opens the next floor for the whole server, with an announcement
+to everyone. Whoever lands the killing blow takes the **Last Attack bonus**: a unique item, or a
+legendary one on every fifth floor.
+
 ## The Mercenary Guild
 
 Every city has a **guild hall** (walk up and press E) and every station a guild terminal (in the
@@ -342,6 +352,7 @@ planet), `/town [i]`, `/pos <x> <z>`, `/war`, `/event famine|plague|festival|rai
 | `shared/towns.js`, `server/politics.js`, `server/natives.js` | Towns, realms and people are generated from the seed; what happens to them afterwards (wars, deaths, coups, markets) is simulated and saved per visited world. |
 | `server/talk.js`, `server/quests.js`, `server/ai.js` | Conversations, markets and quests; Claude voices townsfolk with structured, role-limited replies. |
 | `server/powers.js`, `server/bases.js`, `server/director.js` | Skills, magic, powers, curses and mechs; bases, stations and crafting; the AI director. |
+| `server/tower.js`, `shared/tower.js` | The Spire: floors, floor bosses, the front line and last-attack bonuses. |
 | `server/guild.js`, `shared/guild.js` | The Mercenary Guild: contract boards, ranks and merit, wanted outlaws. |
 | Interest management | In space, each client subscribes to the 3×3 sectors around it. On a planet, it hears only that planet. |
 | Movement | Clients simulate their own ship or pilot so controls feel instant (`shared/rules.js`). The server checks plausibility and snaps cheaters back. |

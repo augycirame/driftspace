@@ -8,6 +8,7 @@ import { CREATURES } from '../shared/content/creatures.js';
 import { RELICS } from '../shared/content/relics.js';
 import { generateDungeon, canStand, isFloor, lineOfSight, dungeonSeed, dungeonDepth } from '../shared/dungeon.js';
 import { creatureStats } from '../shared/planet.js';
+import { floorTheme, floorSeed, floorDepth, floorScale, floorBoss, raidScale } from '../shared/tower.js';
 import { weaponStats, strike, randomItem, randomRelic, makeRelic, RUN_SPEED } from '../shared/items.js';
 
 const EMPTY_RESET_MS = 2 * 60 * 1000;
@@ -24,25 +25,29 @@ export class Dungeons {
     return `${planet.id}#${st.id}#${party ? 'party:' + party.id : 'solo:' + p.key}`;
   }
 
-  create(key, planet, st) {
-    const def = STRUCTURES[st.type];
-    const theme = DUNGEON_THEMES[def.dungeon];
-    const seed = dungeonSeed(planet, st.id), depth = dungeonDepth(planet);
-    const layout = generateDungeon(def.dungeon, seed, depth);
+  // A dungeon behind a structure's entrance, or (with floor) a floor of the Spire.
+  create(key, planet, st, floor = null) {
+    const themeId = floor ? floorTheme(floor) : STRUCTURES[st.type].dungeon;
+    const theme = DUNGEON_THEMES[themeId];
+    const seed = floor ? floorSeed(floor) : dungeonSeed(planet, st.id), depth = floor ? floorDepth(floor) : dungeonDepth(planet);
+    const layout = generateDungeon(themeId, seed, depth);
     const stId = st.id;
     const enemies = new Map();
+    const fb = floor ? floorBoss(floor) : null;
     for (const e of layout.enemies) {
       const s = creatureStats(planet, e.species);
-      const k = 1 + 0.25 * (depth - 1);
-      const hp = Math.round(s.hp * k * (e.boss ? 1 : 1.2) * (this.w.director?.difficulty || 1));
+      const k = floor ? floorScale(floor) : 1 + 0.25 * (depth - 1);
+      const boss = e.boss && fb;
+      const hp = Math.round(s.hp * k * (boss ? fb.hp : e.boss ? 1 : 1.2) * (this.w.director?.difficulty || 1));
       enemies.set(e.id, {
         id: e.id, species: e.species, x: e.x, z: e.z, home: [e.x, e.z], yaw: 0, hp, maxHp: hp,
-        dmg: s.dmg * k, speed: s.speed * 0.9, size: s.size, boss: !!e.boss, aggro: false, lastAttack: 0, lastShot: 0,
+        dmg: s.dmg * k * (boss ? fb.dmg : 1), speed: s.speed * 0.9, size: s.size * (boss ? fb.size : 1), boss: !!e.boss, aggro: false, lastAttack: 0, lastShot: 0,
+        ...(boss ? { name: fb.name, floorBoss: true, phase: 0 } : {}),
       });
     }
     const inst = {
-      key, planet, st, theme: def.dungeon, themeDef: theme, seed, depth, layout, enemies,
-      opened: {}, bossDead: false, members: new Set(), emptySince: 0, stId,
+      key, planet, st, theme: themeId, themeDef: theme, seed, depth, layout, enemies,
+      opened: {}, bossDead: false, members: new Set(), emptySince: 0, stId, floor, bossName: fb?.name || null,
     };
     this.instances.set(key, inst);
     return inst;
@@ -50,16 +55,16 @@ export class Dungeons {
 
   view(inst, p) {
     return {
-      t: 'dungeon', key: inst.key, theme: inst.theme, name: inst.themeDef.name, seed: inst.seed, depth: inst.depth,
+      t: 'dungeon', key: inst.key, theme: inst.theme, name: inst.floor ? `The Spire · Floor ${inst.floor}` : inst.themeDef.name, seed: inst.seed, depth: inst.depth, floor: inst.floor, bossName: inst.bossName,
       opened: [...(inst.opened[p.key] || [])], bossDead: inst.bossDead,
     };
   }
 
   // Walk down the entrance: the whole party lands in the same dungeon.
-  enter(conn, planet, st) {
+  enter(conn, planet, st, floor = null) {
     const p = conn.player;
     const key = this.instanceKey(planet, st, p);
-    const inst = this.instances.get(key) || this.create(key, planet, st);
+    const inst = this.instances.get(key) || this.create(key, planet, st, floor);
     inst.members.add(p.key);
     p.mode = 'dungeon';
     p.dungeon = key;
@@ -69,9 +74,18 @@ export class Dungeons {
     p.lastPos = Date.now();
     conn.send(this.view(inst, p));
     conn.send({ t: 'teleport', mode: 'dungeon', x: p.px, y: 0, z: p.pz });
-    this.w.discover(conn, [`structure:${st.type}`, `dungeon:${inst.theme}`]);
-    conn.send({ t: 'chat', from: null, text: `${inst.themeDef.name} (depth ${inst.depth}): ${inst.themeDef.lore}` });
+    if (floor) {
+      conn.send({ t: 'transmission', title: `THE SPIRE · FLOOR ${floor}`, lines: [`Somewhere in this labyrinth waits ${inst.bossName}.`, 'Find the boss room. Clear the floor.'] });
+    } else {
+      this.w.discover(conn, [`structure:${st.type}`, `dungeon:${inst.theme}`]);
+      conn.send({ t: 'chat', from: null, text: `${inst.themeDef.name} (depth ${inst.depth}): ${inst.themeDef.lore}` });
+    }
     this.w.sendSelf(conn);
+  }
+
+  // A floor of the Spire: the party shares it like any dungeon.
+  enterFloor(conn, planet, spire, floor) {
+    this.enter(conn, planet, { id: `spire:${floor}`, type: 'spire', x: spire.x, z: spire.z, radius: 16 }, floor);
   }
 
   leave(conn) {
@@ -190,6 +204,7 @@ export class Dungeons {
     if (!e.boss && Math.random() < 0.15 * luck) this.w.giveItem(conn, randomItem(inst.planet.richness + 1));
     if (e.boss) {
       inst.bossDead = true;
+      if (inst.floor) this.w.tower.cleared(inst, conn, crew);
       for (const c of crew) { this.w.quests.onEvent(c, 'dungeon', { pid: inst.planet.id, st: inst.stId }); this.w.guild.onDungeon(c, inst.planet.id, inst.stId); }
       const name = CREATURES[e.species].name;
       this.toInstance(inst, { t: 'transmission', title: `${name.toUpperCase()} DEFEATED`, lines: [`${name} falls. The deepest chamber of the ${inst.themeDef.name} is open.`] });
@@ -293,7 +308,14 @@ export class Dungeons {
         if (sees && dist < best) { best = dist; target = c; }
       }
       if (!target) continue;
+      // A floor boss grows with the party it meets.
+      if (e.floorBoss && !e.aggro) {
+        const k = raidScale(crew.length);
+        e.maxHp = Math.round(e.maxHp * k); e.hp = Math.round(e.hp * k);
+        this.toInstance(inst, { t: 'toast', msg: `${e.name} awakens!` });
+      }
       e.aggro = true;
+      if (e.floorBoss) this.bossPhase(inst, e, crew, now);
       const p = target.player;
       const reach = 1.4 + e.size;
       if (best > reach) {
@@ -316,6 +338,33 @@ export class Dungeons {
     }
   }
 
+  // Floor bosses change as they weaken: at half health they enrage and call guards, and at a
+  // quarter they unleash a shockwave that hits everyone close by.
+  bossPhase(inst, e, crew, now) {
+    const f = e.hp / e.maxHp;
+    if (e.phase === 0 && f < 0.5) {
+      e.phase = 1;
+      e.speed *= 1.3; e.dmg *= 1.25;
+      this.toInstance(inst, { t: 'transmission', title: `${e.name.toUpperCase()} ENRAGES`, lines: ['Its eyes burn red. Guards pour in from the shadows!'] });
+      const theme = DUNGEON_THEMES[inst.theme];
+      for (let i = 0; i < 2 + Math.min(4, crew.length); i++) {
+        const sp = theme.enemies[i % theme.enemies.length], s = creatureStats(inst.planet, sp), k = floorScale(inst.floor);
+        const a = (i / 4) * Math.PI * 2, x = e.x + Math.cos(a) * 4, z = e.z + Math.sin(a) * 4;
+        if (!canStand(inst.layout, x, z, 0.8)) continue;
+        const id = `e${Date.now().toString(36)}${i}`, hp = Math.round(s.hp * k);
+        inst.enemies.set(id, { id, species: sp, x, z, home: [x, z], yaw: 0, hp, maxHp: hp, dmg: s.dmg * k, speed: s.speed * 0.9, size: s.size, boss: false, aggro: true, lastAttack: 0, lastShot: 0 });
+      }
+    }
+    if (e.phase >= 1 && f < 0.25) {
+      if (e.phase === 1) { e.phase = 2; this.toInstance(inst, { t: 'toast', msg: `${e.name} is desperate. Watch for the shockwave!` }); }
+      if (now - (e.lastWave || 0) > 4500) {
+        e.lastWave = now;
+        this.toInstance(inst, { t: 'boom', x: e.x, y: 0.5, z: e.z, size: 9, organic: false });
+        for (const c of crew) if (!c.player.dead && Math.hypot(c.player.px - e.x, c.player.pz - e.z) < 9) this.hurtPlayer(c, e.dmg * 0.8, e.name);
+      }
+    }
+  }
+
   snapshot(conn) {
     const inst = this.inst(conn);
     if (!inst) return { players: [], creatures: [] };
@@ -325,7 +374,7 @@ export class Dungeons {
       const p = c.player;
       players.push({ id: c.id, name: p.name, key: p.key, color: p.color, x: p.px, y: p.py, z: p.pz, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp, dead: !!p.dead, armor: p.armor?.armor || 0 });
     }
-    const creatures = [...inst.enemies.values()].map((e) => ({ id: e.id, sp: e.species, x: e.x, y: 0, z: e.z, yaw: e.yaw, hp: e.hp, maxHp: e.maxHp, size: e.size, boss: e.boss, hostile: true }));
+    const creatures = [...inst.enemies.values()].map((e) => ({ id: e.id, sp: e.species, x: e.x, y: 0, z: e.z, yaw: e.yaw, hp: e.hp, maxHp: e.maxHp, size: e.size, boss: e.boss, hostile: true, ...(e.name ? { name: e.name, phase: e.phase, aggro: e.aggro } : {}) }));
     return { players, creatures };
   }
 }
